@@ -1,0 +1,4 @@
+# dsh bundle patch：安装本插件时把自身插入 profile 的插件树。
+- insert:
+    - id: prompt-history
+      name: dsh-tweaks-prompt-history

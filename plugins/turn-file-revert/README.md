@@ -38,21 +38,13 @@
 ## 安装
 
 ```powershell
-dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\turn-file-revert"
+npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\turn-file-revert"
 ```
 
-然后打开 `C:\Users\你的用户名\.dsh\profiles\web\cordis.patch.yml`，拉到**最下面**粘进去：
+重启 DSH，并在浏览器中强制刷新（`Ctrl + Shift + R`）。
 
-```yaml
-- insert:
-    - id: turn-file-revert
-      name: dsh-tweaks-turn-file-revert
-```
-
-重启 DSH，再到浏览器按 `Ctrl + Shift + R` 刷新。
-
-> 这个插件有宿主半区，"运行中插进去"不生效，**必须重启 DSH**。
-> `web` 是你的 profile 名；不确定就打开 `C:\Users\你的用户名\.dsh\profiles\` 看一眼，里面那个文件夹叫什么就填什么。
+> 本插件含宿主半区，必须重启 DSH 后生效。
+> `web` 为 DSH 的 profile 名称，可在 `C:\Users\你的用户名\.dsh\profiles\` 下确认。
 
 ## 开发者
 

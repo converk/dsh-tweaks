@@ -87,38 +87,13 @@
 
 ## 安装
 
-三个插件互相独立，可以只装想用的那个。下面用 **prompt-history** 举例，另外两个把名字换掉，步骤一模一样。
-
-**第 1 步：把插件装到 DSH 里**
-
-打开 PowerShell，执行下面这句（路径改成你放这个项目的目录）：
+下载本仓库，然后安装需要的插件。三个插件互相独立，下方以 **prompt-history** 为例，另外两个把
+名称换成 `model-capabilities`、`turn-file-revert` 即可：
 
 ```powershell
-dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\prompt-history"
+npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\prompt-history"
 ```
 
-> 命令里的 `web` 是 DSH 的配置名（profile）。不确定自己叫什么，打开 `C:\Users\你的用户名\.dsh\profiles\` 看一眼，里面那个文件夹叫什么，这里就填什么。
+安装完成后重启 DSH，并在浏览器中强制刷新（`Ctrl + Shift + R`）。
 
-**第 2 步：让 DSH 每次启动都加载它**
-
-用记事本打开这个文件：
-
-```
-C:\Users\你的用户名\.dsh\profiles\web\cordis.patch.yml
-```
-
-拉到文件**最下面**，把下面这几行粘进去，保存：
-
-```yaml
-- insert:
-    - id: prompt-history
-      name: dsh-tweaks-prompt-history
-```
-
-> 每个插件要粘的内容都不一样，直接复制那个插件自己 README 里「安装到 DSH」小节给的就行。
-
-**第 3 步：重启**
-
-把 DSH 完全退出，再重新打开；然后到浏览器里按 `Ctrl + Shift + R` 强制刷新一次。
-
-> 三个插件都要装的话，第 1、2 步各做三遍（把 `prompt-history` 换成 `model-capabilities`、`turn-file-revert`）。
+> 其中 `web` 为 DSH 的 profile 名称，可在 `C:\Users\你的用户名\.dsh\profiles\` 下确认。
