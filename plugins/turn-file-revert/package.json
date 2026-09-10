@@ -1,0 +1,44 @@
+{
+  "name": "dsh-tweaks-turn-file-revert",
+  "description": "在官方「本轮文件改动」行之后补一行：本回合 +/− 行数统计，以及「撤回全部修改 / 重新应用修改」开关",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./src/client/index.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "check": "tsc --noEmit",
+    "selftest": "node scripts/selftest.mjs",
+    "smoke": "node scripts/clientsmoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "~18.3.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

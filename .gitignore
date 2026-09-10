@@ -1,0 +1,21 @@
+# Node / pnpm
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# 日志与临时文件
+*.log
+tmp/
+
+# Python / conda（辅助脚本）
+__pycache__/
+*.pyc
+.venv/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
