@@ -51,12 +51,25 @@ export interface OverlaySlotProps {
   readonly useChat?: SnapshotSelectorHook<ChatSnapshotLike> | undefined
   readonly useInput?: SnapshotSelectorHook<InputStateLike> | undefined
   readonly inputActions?: InputActionsLike | undefined
+  /** 文案，由插件 apply 注入（不经 Slot 运行时）。 */
+  readonly t?: Translate | undefined
 }
 
-/** cordis 客户端上下文的最小面（本插件只用 `get`）。 */
+/** 绑定到命名空间后的翻译函数（`{name}` 占位符由 locale 运行时插值）。 */
+export type Translate = (key: string, params?: Record<string, string>) => string
+
+/** `locale` 服务的最小面：注册字典 + 绑定命名空间。 */
+export interface LocaleLike {
+  register(namespace: string, language: string, dictionary: Record<string, string>): unknown
+  bind(namespace: string): Translate
+}
+
+/** cordis 客户端上下文的最小面（本插件只用 `get`，`effect` 可选）。 */
 export interface PluginClientContextLike {
   /** 读取可选服务；未挂载时为 undefined。 */
   get(name: string): unknown
+  /** 登记一次随插件卸载而撤销的副作用；极简运行时可能没有。 */
+  effect?(callback: () => (() => void) | void, label?: string): unknown
 }
 
 /** `slots` 服务的最小面（本插件只注入 + 注册一个列表项）。 */

@@ -73,7 +73,9 @@ const pillStyle: CSSProperties = {
 
 /** overlay 列表项：常态渲染空锚点，浏览中渲染位置角标。 */
 export function PromptHistoryOverlay(props: OverlaySlotProps): ReactElement | null {
-  const { useChat, useInput, inputActions, sessionId } = props
+  const { useChat, useInput, inputActions, sessionId, t: translate } = props
+  /** locale 未就绪时的兜底（正常路径下用不到，key 不会被渲染出来）。 */
+  const t = translate ?? ((key: string): string => key)
 
   // 数据源：会话已定稿节点（选择器返回数组本身，引用稳定时不再重渲染）。
   const nodes = useChat?.((snapshot: ChatSnapshotLike) => snapshot.legacy.nodes)
@@ -190,9 +192,9 @@ export function PromptHistoryOverlay(props: OverlaySlotProps): ReactElement | nu
   if (index === null || history[index] === undefined) return <div ref={anchorRef} />
   return (
     <div ref={anchorRef}>
-      <div style={pillStyle} title="历史提示词（↑ / ↓ 切换）">
+      <div style={pillStyle} title={t('browseTitle')}>
         {'\u2191\u2193 '}
-        {`历史 ${index + 1}/${history.length}`}
+        {t('position', { n: String(index + 1), total: String(history.length) })}
       </div>
     </div>
   )
