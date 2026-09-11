@@ -22,11 +22,11 @@
 
 **第三方网关（`llm-pi-ai`）** —— 思考强度 + 多模态 + 容量快捷填入：
 
-![llm-pi-ai 模型行展开：思考强度选 OpenAI 预置（档位 off/minimal/low/medium/high/xhigh/max，默认勾 off/low/high/max），下面是多模态与「上下文长度与最大输出长度：1M / 128K」](../../docs/images/model-capabilities-third-party.png)
+![llm-pi-ai 模型行展开：思考强度选 OpenAI 预置（档位 off/minimal/low/medium/high/xhigh/max，默认勾 off/low/high/max），下面是多模态与「上下文长度与最大输出长度：1M / 128K」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/model-capabilities-third-party.png)
 
 **官方 DeepSeek（`llm-deepseek`）** —— 只有多模态（DeepSeek 的思考档位是提供方级设置，这里只读显示当前值）：
 
-![llm-deepseek 模型行展开：没有每模型思考强度，只提示档位由提供方级 reasoningEffort / thinking 控制；下面是「多模态：」与「上下文长度与最大输出长度：1M / 128K」](../../docs/images/model-capabilities-official.png)
+![llm-deepseek 模型行展开：没有每模型思考强度，只提示档位由提供方级 reasoningEffort / thinking 控制；下面是「多模态：」与「上下文长度与最大输出长度：1M / 128K」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/model-capabilities-official.png)
 
 ## 说明
 

@@ -2,9 +2,16 @@
   "name": "dsh-tweaks-turn-file-revert",
   "description": "在官方「本轮文件改动」行之后补一行：本回合 +/− 行数统计，以及「撤回全部修改 / 重新应用修改」开关",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/converk/dsh-tweaks.git",
+    "directory": "plugins/turn-file-revert"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "main": "lib/index.js",
   "types": "src/index.ts",
   "exports": {
@@ -18,6 +25,11 @@
     },
     "./package.json": "./package.json"
   },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -28,6 +40,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "prepack": "npm run build",
     "watch": "node build.mjs --watch",
     "check": "tsc --noEmit",
     "selftest": "node scripts/selftest.mjs",

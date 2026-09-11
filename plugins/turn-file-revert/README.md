@@ -25,15 +25,15 @@
 
 **① 本轮有改动 —— 统计 + 可点的「撤回全部修改」**
 
-![本轮有改动：本轮改动情况 +52 行 −7 行、3 个文件，「撤回全部修改」可点](../../docs/images/turn-file-revert-modified.png)
+![本轮有改动：本轮改动情况 +52 行 −7 行、3 个文件，「撤回全部修改」可点](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/turn-file-revert-modified.png)
 
 **② 点了「撤回全部修改」—— 按钮变成「重新应用修改」**
 
-![撤回后：按钮变为「重新应用修改」，右侧提示「已撤回本回合修改」](../../docs/images/turn-file-revert-reverted.png)
+![撤回后：按钮变为「重新应用修改」，右侧提示「已撤回本回合修改」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/turn-file-revert-reverted.png)
 
 **③ 更早的回合 —— 按钮置灰，鼠标移上去给提示**
 
-![非最后一次对话：按钮置灰不可点，hover 提示「该轮对话改动现在不支持撤回/恢复」](../../docs/images/turn-file-revert-latest-only.png)
+![非最后一次对话：按钮置灰不可点，hover 提示「该轮对话改动现在不支持撤回/恢复」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/turn-file-revert-latest-only.png)
 
 ## 说明
 

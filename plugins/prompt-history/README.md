@@ -15,7 +15,7 @@
 
 翻的过程中，输入框右上角会显示 `↑↓ 历史 3/12`，告诉你现在翻到第几条：
 
-![输入框里按 ↑/↓ 召回本会话的历史提示词](../../docs/images/prompt-history.png)
+![输入框里按 ↑/↓ 召回本会话的历史提示词](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/prompt-history.png)
 
 ## 说明
 
