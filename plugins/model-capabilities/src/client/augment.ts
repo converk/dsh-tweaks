@@ -7,8 +7,10 @@
  * 「上下文窗口 / 最大输出」输入框加一个 `1M / 128K` 快捷按钮。
  *
  * 交互（用户拍板）：
- * - 思考强度只提供 5 档 `off / low / medium / high / max`；一个档都不勾 =
- *   不支持思考（写 `reasoningEfforts: false`）；
+ * - 思考强度用「协议预置」选词表：OpenAI = off/minimal/low/medium/high/xhigh/max，
+ *   Anthropic = off/low/medium/high/xhigh/max；两个预置默认都勾 off/low/high/max；
+ *   没配置过 `reasoningEfforts` 的模型展开即套用 OpenAI 预置；
+ *   一个档都不勾 = 不支持思考（写 `reasoningEfforts: false`）；
  * - 多模态是二选一（仅文本 / 文本+图片），没有「跟随目录」；
  * - 展开模型行时在控件顶部显示该模型**当前**的思考强度 / 多模态 / 上下文 / 输出。
  *
@@ -23,6 +25,7 @@
 
 import {
   CAPACITY_PRESETS,
+  DEFAULT_REASONING_PRESET,
   REASONING_PRESET_IDS,
   THINKING_LEVELS,
   buildModelOps,
@@ -32,7 +35,7 @@ import {
   getPath,
   isJsonArray,
   listStoredModels,
-  matchReasoningPreset,
+  presetLevels,
   reasoningPreset,
 } from './capability.js'
 import type {
@@ -91,6 +94,10 @@ interface RowState {
   wasNew?: boolean
   /** 已处理过该行的容量自动填入（避免反复覆盖）。 */
   capacitySeen?: boolean
+  /** 当前选中的协议预置（决定档位词表）；随行保留，重注入不重置。 */
+  preset: ReasoningPresetId
+  /** 用户层条目里是否写过 `reasoningEfforts`；没写过 = 展开时套用预置默认。 */
+  reasoningConfigured: boolean
 }
 
 /** 建元素。 */
@@ -149,6 +156,16 @@ function insideOwnControls(node: Node | null): boolean {
     current = current.parentNode
   }
   return false
+}
+
+/** 用户层条目里有没有写过 `reasoningEfforts`（没写过 = 未配置，展开时套用预置默认）。 */
+function hasConfiguredReasoning(entry: JsonObject | undefined): boolean {
+  return entry !== undefined && Object.prototype.hasOwnProperty.call(entry, 'reasoningEfforts')
+}
+
+/** 值是不是合法的协议预置 id。 */
+function isPresetId(value: string): value is ReasoningPresetId {
+  return (REASONING_PRESET_IDS as readonly string[]).includes(value)
 }
 
 /** 把 unknown 收成普通对象（读取 DeepSeek 提供方级字段用）。 */
@@ -410,7 +427,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
     if (state.inputRadios.textImage !== undefined) {
       state.inputRadios.textImage.checked = draft.input === 'text+image'
     }
-    if (state.presetSelect !== undefined) state.presetSelect.value = matchReasoningPreset(draft.reasoning) ?? 'custom'
+    if (state.presetSelect !== undefined) state.presetSelect.value = state.preset
     setControlsDisabled(state, !writable)
     updateSummary(state)
     setStatus(state)
@@ -434,9 +451,24 @@ export function augment(options: AugmentOptions): AugmentHandle {
     state.error = undefined
     state.notice = undefined
     state.pending = draftsEqual(draft, state.stored ?? emptyDraft()) ? undefined : draft
-    if (state.presetSelect !== undefined) state.presetSelect.value = matchReasoningPreset(draft.reasoning) ?? 'custom'
     updateSummary(state)
     setStatus(state)
+  }
+
+  /** 展开时控件该显示的草稿：挂起值优先，其次已存值，未配置思考时套用预置默认。 */
+  function initialDraftFor(state: RowState): ModelCapabilityDraft {
+    const stored = state.stored ?? emptyDraft()
+    if (!manageReasoning || state.reasoningConfigured) return stored
+    return { reasoning: reasoningPreset(state.preset), input: stored.input }
+  }
+
+  /** 应用初始草稿；未配置思考的模型由此产生挂起改动（= 展开即套用预置）。 */
+  function applyInitialDraft(state: RowState): void {
+    const initial = state.pending ?? initialDraftFor(state)
+    if (state.pending === undefined && !draftsEqual(initial, state.stored ?? emptyDraft())) {
+      state.pending = initial
+    }
+    applyDraftToControls(state, initial)
   }
 
   /** 构建行内控件并写进 state。 */
@@ -457,44 +489,55 @@ export function augment(options: AugmentOptions): AugmentHandle {
       field.append(el('span', 'dshMc_label', t('reasoning')))
       const preset = selectEl('dshMc_select')
       preset.dataset.dshMcField = 'preset'
-      preset.append(optionEl('custom', t('presetCustom')))
       for (const id of REASONING_PRESET_IDS) preset.append(optionEl(id, presetLabel(id, t)))
-      preset.addEventListener('change', () => {
-        const id = preset.value
-        if (id === 'custom') return
-        const levels = reasoningPreset(id as ReasoningPresetId)
-        if (levels === undefined) return
-        const current = readDraftFromControls(state)
-        applyDraftToControls(state, { reasoning: { ...levels }, input: current.input })
-        onControlChanged(state)
-      })
+      preset.value = state.preset
       field.append(preset)
 
       const levelsBox = el('div', 'dshMc_levels')
       const checks: Partial<Record<ThinkingLevel, HTMLInputElement>> = {}
       const inputs: Partial<Record<ThinkingLevel, HTMLInputElement>> = {}
-      for (const level of THINKING_LEVELS) {
-        const label = el('label', 'dshMc_level')
-        const check = inputEl('checkbox', 'dshMc_check')
-        check.dataset.dshMcField = `level-${level}`
-        check.addEventListener('change', () => {
-          const wire = inputs[level]
-          if (wire !== undefined) {
-            wire.disabled = !check.checked
-            if (check.checked && wire.value === '') wire.value = level === 'off' ? '' : level
-          }
-          onControlChanged(state)
-        })
-        label.append(check, el('code', '', level))
-        const wire = inputEl('text', 'dshMc_wire')
-        wire.dataset.dshMcField = `wire-${level}`
-        wire.disabled = true
-        wire.placeholder = level === 'off' ? t('wireOffHint') : level
-        wire.addEventListener('input', () => onControlChanged(state))
-        checks[level] = check
-        inputs[level] = wire
-        levelsBox.append(label, wire)
+
+      /** 按当前预置的词表重建档位行（切协议时整块换掉）。 */
+      const buildLevels = (): void => {
+        levelsBox.replaceChildren()
+        for (const key of Object.keys(checks)) delete checks[key as ThinkingLevel]
+        for (const key of Object.keys(inputs)) delete inputs[key as ThinkingLevel]
+        for (const level of presetLevels(state.preset)) {
+          const label = el('label', 'dshMc_level')
+          const check = inputEl('checkbox', 'dshMc_check')
+          check.dataset.dshMcField = `level-${level}`
+          check.addEventListener('change', () => {
+            const wire = inputs[level]
+            if (wire !== undefined) {
+              wire.disabled = !check.checked
+              if (check.checked && wire.value === '') wire.value = level === 'off' ? '' : level
+            }
+            onControlChanged(state)
+          })
+          label.append(check, el('code', '', level))
+          const wire = inputEl('text', 'dshMc_wire')
+          wire.dataset.dshMcField = `wire-${level}`
+          wire.disabled = true
+          wire.placeholder = level === 'off' ? t('wireOffHint') : level
+          wire.addEventListener('input', () => onControlChanged(state))
+          checks[level] = check
+          inputs[level] = wire
+          levelsBox.append(label, wire)
+        }
       }
+      buildLevels()
+
+      preset.addEventListener('change', () => {
+        const next = preset.value
+        if (!isPresetId(next)) return
+        state.preset = next
+        buildLevels()
+        // 切协议：档位行换成该协议的词表，并按预置默认重新勾选（两家都是 off/low/high/max）。
+        const input = state.inputRadios.textImage?.checked === true ? 'text+image' : 'text'
+        applyDraftToControls(state, { reasoning: reasoningPreset(next), input })
+        onControlChanged(state)
+      })
+
       field.append(levelsBox, el('p', 'dshMc_hint', t('levelsHint')))
       reasoningField = field
       presetSelect = preset
@@ -540,7 +583,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
     })
     const status = el('span', 'dshMc_status')
     status.dataset.dshMc = 'status'
-    actions.append(capacityButton, status)
+    actions.append(el('span', 'dshMc_label', t('capacityLabel')), capacityButton, status)
 
     container.append(summary)
     if (reasoningField !== undefined) container.append(reasoningField)
@@ -568,7 +611,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
     const container = state.container
     if (container === undefined) return
     advanced.append(container)
-    applyDraftToControls(state, state.pending ?? state.stored ?? emptyDraft())
+    applyInitialDraft(state)
     if (activeField !== undefined) {
       const next = container.querySelector<HTMLElement>(`[data-dsh-mc-field="${activeField}"]`)
       if (next !== null) {
@@ -875,13 +918,16 @@ export function augment(options: AugmentOptions): AugmentHandle {
       let state = rows.get(row)
       if (state === undefined) {
         const initialId = readModelId(row)
+        const storedEntry = storedModels.get(initialId)
         state = {
           row,
           uid: (rowUid += 1),
           modelId: initialId,
           wasNew: initialId === '',
           // 关键：新建行状态时就把用户层已存值读进来，否则展开时控件全是空的。
-          stored: draftFromEntry(storedModels.get(initialId), inputField),
+          stored: draftFromEntry(storedEntry, inputField),
+          reasoningConfigured: hasConfiguredReasoning(storedEntry),
+          preset: DEFAULT_REASONING_PRESET,
           levelChecks: {},
           levelInputs: {},
           inputRadios: {},
@@ -897,8 +943,10 @@ export function augment(options: AugmentOptions): AugmentHandle {
       const id = readModelId(row)
       if (id !== state.modelId) {
         state.modelId = id
-        state.stored = draftFromEntry(storedModels.get(id), inputField)
-        if (state.pending === undefined) applyDraftToControls(state, state.stored)
+        const storedEntry = storedModels.get(id)
+        state.stored = draftFromEntry(storedEntry, inputField)
+        state.reasoningConfigured = hasConfiguredReasoning(storedEntry)
+        if (state.pending === undefined) applyInitialDraft(state)
       }
       const advanced = advancedOf(row)
       if (advanced === undefined) {

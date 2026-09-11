@@ -9,9 +9,10 @@
  *    （`compat`、`name`、`contextWindow`、`maxTokens`、其它模型条目）。
  *
  * 交互约定（用户拍板）：
- * - 思考强度只提供 **5 档**：`off / low / medium / high / max`（本体还有
- *   `minimal` / `xhigh`，本插件不提供、也不管理；保存时未勾选的档位不写键，
- *   本体把它们钉成「不支持」）；
+ * - 思考强度按**协议预置**给出词表：`openai` = off/minimal/low/medium/high/xhigh/max，
+ *   `anthropic` = off/low/medium/high/xhigh/max；套用预置时默认勾选
+ *   off/low/high/max。一个档都不勾 = 该模型不支持思考，写 `reasoningEfforts: false`；
+ *   勾了档位就写 dict，未勾选的档位不写键，本体把它们钉成「不支持」；
  * - **没有「跟随目录」**：一个档都不勾 = 该模型不支持思考，写 `reasoningEfforts:
  *   false`；勾了档位就写 dict；
  * - 多模态是二选一：`text` / `text + image`，始终写显式值；
@@ -31,8 +32,11 @@
  * - `input`：词表只有 `text` | `image`。
  */
 
-/** 插件提供的思考档位（只这 5 档）。 */
-export const THINKING_LEVELS = ['off', 'low', 'medium', 'high', 'max'] as const
+/**
+ * 插件认识的全部思考档位（两家协议词表的并集，按升级顺序）。
+ * 具体显示哪些由当前协议预置决定（见 {@link REASONING_PRESETS}）。
+ */
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
 /** 一个思考档位的字面量。 */
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number]
@@ -133,6 +137,50 @@ export const REASONING_PRESET_IDS = ['openai', 'anthropic'] as const
 /** 协议预置的 id 字面量。 */
 export type ReasoningPresetId = (typeof REASONING_PRESET_IDS)[number]
 
+/** 未配置思考强度的模型默认套用的预置。 */
+export const DEFAULT_REASONING_PRESET: ReasoningPresetId = 'openai'
+
+/** 套用任一预置时默认勾选的档位（两家一致）。 */
+const PRESET_DEFAULT_TICKED: readonly ThinkingLevel[] = ['off', 'low', 'high', 'max']
+
+/** 一个协议预置：该协议的档位词表 + 套用时的默认勾选。 */
+export interface ReasoningPresetSpec {
+  /** 该协议官方支持的档位；UI 只显示这些行。 */
+  readonly levels: readonly ThinkingLevel[]
+  /** 套用该预置时默认勾选的档位。 */
+  readonly defaultTicked: readonly ThinkingLevel[]
+}
+
+/**
+ * 两家协议的档位词表（取自 DSH 自带 pi-ai 目录里两家模型的 `thinkingLevelMap` 并集）：
+ * - `openai`（Responses）：off / minimal / low / medium / high，再补上 xhigh、max；
+ * - `anthropic`（Messages）：off / low / medium / high / max，再补上 xhigh。
+ *   Anthropic 没有 `minimal`（pi-ai 的 `mapThinkingLevelToEffort` 把 minimal 降级成 low）。
+ *
+ * 预置只决定「有哪些档位可选」和「套用时默认勾什么」；协议本身由提供方/模型的
+ * `compat` 决定，本插件绝不写 `compat`。
+ */
+export const REASONING_PRESETS: Record<ReasoningPresetId, ReasoningPresetSpec> = {
+  openai: {
+    levels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    defaultTicked: PRESET_DEFAULT_TICKED,
+  },
+  anthropic: {
+    levels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+    defaultTicked: PRESET_DEFAULT_TICKED,
+  },
+}
+
+/**
+ * 一个预置要显示的档位，按插件统一的升级顺序排列。
+ * @param id - 预置 id。
+ * @returns 档位列表。
+ */
+export function presetLevels(id: ReasoningPresetId): ThinkingLevel[] {
+  const allowed = new Set<ThinkingLevel>(REASONING_PRESETS[id].levels)
+  return THINKING_LEVELS.filter((level) => allowed.has(level))
+}
+
 /** 容量快捷填入：官方输入框接受这些字符串。 */
 export const CAPACITY_PRESETS: readonly { label: string; contextWindow: string; maxTokens: string }[] = [
   { label: '1M / 128K', contextWindow: '1000000', maxTokens: '131072' },
@@ -192,7 +240,7 @@ export function copyDraft(draft: ModelCapabilityDraft): ModelCapabilityDraft {
 /**
  * 从用户层条目（`models` 条目或 `modelOverrides` 值）还原草稿。
  *
- * 只读插件管理的 5 档；`minimal` / `xhigh` 不显示也不管理。没有
+ * 读全部档位（两家协议词表的并集）。没有
  * `reasoningEfforts` 或它是 `false` 时，草稿是「一个档都不勾」。
  * @param entry - 用户层条目；undefined 表示没有配置。
  * @returns 草稿。
@@ -421,32 +469,18 @@ export function buildModelOps(input: SaveInput): SavePlan {
   return { ops, issues, mode: 'models' }
 }
 
-/** 协议预置：只返回要填进档位表的级别与拼写，绝不涉及 `compat`。 */
-export function reasoningPreset(id: ReasoningPresetId): Partial<Record<ThinkingLevel, string>> | undefined {
-  switch (id) {
-    case 'openai':
-      return { off: '', low: 'low', medium: 'medium', high: 'high' }
-    case 'anthropic':
-      return { off: '', low: 'low', medium: 'medium', high: 'high', max: 'max' }
-  }
+/**
+ * 套用一个协议预置：返回默认勾选的档位 → 过线拼写。
+ *
+ * 两家的默认勾选相同（off / low / high / max）；预置的差别在**可选档位词表**
+ * （{@link presetLevels}），不在默认勾选。拼写就是档位名本身，`off` 留空
+ * （= 不发参数）。本函数绝不涉及 `compat`。
+ * @param id - 预置 id。
+ * @returns 档位表。
+ */
+export function reasoningPreset(id: ReasoningPresetId): Partial<Record<ThinkingLevel, string>> {
+  const out: Partial<Record<ThinkingLevel, string>> = {}
+  for (const level of REASONING_PRESETS[id].defaultTicked) out[level] = level === 'off' ? '' : level
+  return out
 }
 
-/** 档位表是否与某个协议预置完全一致；用于回显预置下拉。 */
-export function matchReasoningPreset(
-  reasoning: Partial<Record<ThinkingLevel, string>>,
-): ReasoningPresetId | undefined {
-  for (const id of REASONING_PRESET_IDS) {
-    const preset = reasoningPreset(id)
-    if (preset === undefined) continue
-    const keys = new Set<string>([...Object.keys(reasoning), ...Object.keys(preset)])
-    let equal = true
-    for (const key of keys) {
-      if (reasoning[key as ThinkingLevel] !== preset[key as ThinkingLevel]) {
-        equal = false
-        break
-      }
-    }
-    if (equal) return id
-  }
-  return undefined
-}

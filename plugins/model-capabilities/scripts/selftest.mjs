@@ -43,17 +43,17 @@ const PATH = ['providers', 'route']
 // 档位 / 草稿
 // ---------------------------------------------------------------------------
 
-test('THINKING_LEVELS: 只有 off/low/medium/high/max 五档', () => {
-  assert.deepEqual(Array.from(cap.THINKING_LEVELS), ['off', 'low', 'medium', 'high', 'max'])
+test('THINKING_LEVELS: 两家协议词表的并集（按升级顺序）', () => {
+  assert.deepEqual(Array.from(cap.THINKING_LEVELS), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 })
 
-test('draftFromEntry: 完整条目还原成草稿（忽略 minimal/xhigh）', () => {
+test('draftFromEntry: 完整条目还原成草稿（含 minimal/xhigh）', () => {
   const draft = cap.draftFromEntry({
     id: 'glm-5.3',
     reasoningEfforts: { off: null, minimal: 'minimal', high: 'high', max: 'max', xhigh: 'xhigh' },
     input: ['text', 'image'],
   })
-  assert.deepEqual(draft.reasoning, { off: '', high: 'high', max: 'max' })
+  assert.deepEqual(draft.reasoning, { off: '', minimal: 'minimal', high: 'high', max: 'max', xhigh: 'xhigh' })
   assert.equal(draft.input, 'text+image')
 })
 
@@ -373,34 +373,63 @@ test('buildModelOps: DeepSeek 只写 inputModalities，保留其它字段且不�
 // 预置 / 目录 / 常量
 // ---------------------------------------------------------------------------
 
-test('协议预置只填档位表，绝不写 compat', () => {
-  assert.deepEqual(cap.reasoningPreset('anthropic'), {
-    off: '',
-    low: 'low',
-    medium: 'medium',
-    high: 'high',
-    max: 'max',
-  })
+test('协议预置：两家默认都勾 off/low/high/max，档位词表不同', () => {
+  const ticked = { off: '', low: 'low', high: 'high', max: 'max' }
+  assert.deepEqual(cap.reasoningPreset('openai'), ticked)
+  assert.deepEqual(cap.reasoningPreset('anthropic'), ticked)
+  assert.equal(cap.DEFAULT_REASONING_PRESET, 'openai')
+  assert.deepEqual(cap.presetLevels('openai'), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+  assert.deepEqual(cap.presetLevels('anthropic'), ['off', 'low', 'medium', 'high', 'xhigh', 'max'])
+})
+
+test('协议预置落盘只填档位表，绝不写 compat', () => {
   const plan = cap.buildModelOps({
     userSection: { providers: { route: { models: [{ id: 'a' }] } } },
     settingsPath: PATH,
-    edits: [{ id: 'a', draft: { reasoning: cap.reasoningPreset('anthropic') ?? {}, input: 'text' } }],
+    edits: [{ id: 'a', draft: { reasoning: cap.reasoningPreset('anthropic'), input: 'text' } }],
   })
   assert.deepEqual(plan.issues, [])
   assert.deepEqual(plan.ops[0].value[0].reasoningEfforts, {
     off: null,
     low: 'low',
-    medium: 'medium',
     high: 'high',
     max: 'max',
   })
   for (const op of plan.ops) assert.equal(op.path.includes('compat'), false)
 })
 
-test('matchReasoningPreset: 回显匹配的预置', () => {
-  assert.equal(cap.matchReasoningPreset(cap.reasoningPreset('anthropic') ?? {}), 'anthropic')
-  assert.equal(cap.matchReasoningPreset({ off: '', high: 'high' }), undefined)
-  assert.equal(cap.matchReasoningPreset({}), undefined)
+test('协议预置声明的 minimal / xhigh / max 都能落盘', () => {
+  const plan = cap.buildModelOps({
+    userSection: { providers: { route: { models: [{ id: 'a' }] } } },
+    settingsPath: PATH,
+    edits: [
+      {
+        id: 'a',
+        draft: {
+          reasoning: {
+            off: '',
+            minimal: 'minimal',
+            low: 'low',
+            medium: 'medium',
+            high: 'high',
+            xhigh: 'xhigh',
+            max: 'max',
+          },
+          input: 'text',
+        },
+      },
+    ],
+  })
+  assert.deepEqual(plan.issues, [])
+  assert.deepEqual(plan.ops[0].value[0].reasoningEfforts, {
+    off: null,
+    minimal: 'minimal',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: 'xhigh',
+    max: 'max',
+  })
 })
 
 test('listStoredModels: models[] 优先，其次 modelOverrides 键', () => {

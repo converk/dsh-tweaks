@@ -33,7 +33,7 @@
 
 在 DSH 里编辑模型时，官方界面没有"这个模型支不支持思考""支不支持图片"这类开关。这个插件把这些开关补进模型行，并给容量加两个快捷键：
 
-- **思考强度** —— 5 档：关 / low / medium / high / max。一个都不勾 = 这个模型不支持思考。
+- **思考强度** —— 先用「协议预置」选协议，它决定可选档位：`OpenAI` = off / minimal / low / medium / high / xhigh / max，`Anthropic` = off / low / medium / high / xhigh / max。两个预置默认都勾 off / low / high / max；一个都不勾 = 这个模型不支持思考。
 - **多模态** —— 选「文本」或「文本+图片」。
 - **容量快捷填入** —— 「上下文窗口 / 最大输出」各有一个 `1M` / `128K` 按钮；新建模型行展开容量时会自动填好 1000000 / 131072。
 
@@ -41,16 +41,16 @@
 
 1. 打开 **设置 → 模型**，选一个提供方（比如 `llm-pi-ai`）→ **编辑** → **自定义设置**。
 2. 找到要改的模型那一行，点 **「容量」** 展开。
-3. 展开后顶部会显示这个模型当前的配置摘要，下面就是思考强度、多模态和容量按钮。
+3. 展开后顶部会显示这个模型当前的配置摘要，下面就是思考强度、多模态和容量按钮。思考强度先用 **「协议预置」** 选 `OpenAI` / `Anthropic`，档位行会换成该协议的枚举（默认勾 off / low / high / max）。
 4. 勾好、选好之后，点官方那个 **「保存」** 就写进去了。
 
 **第三方网关（`llm-pi-ai`）** —— 思考强度 + 多模态 + 容量快捷填入：
 
-![llm-pi-ai 模型行展开后的思考强度 / 多模态 / 1M·128K 快捷填入](docs/images/model-capabilities-third-party.png)
+![llm-pi-ai 模型行展开：思考强度选 OpenAI 预置（默认勾 off/low/high/max）+ 多模态 + 1M / 128K](docs/images/model-capabilities-third-party.png)
 
 **官方 DeepSeek（`llm-deepseek`）** —— 只有多模态（DeepSeek 的思考档位是提供方级设置，这里只读显示）：
 
-![llm-deepseek 模型行展开后的多模态 / 1M·128K 快捷填入](docs/images/model-capabilities-official.png)
+![llm-deepseek 模型行展开：提供方级思考档位提示 + 多模态 + 1M / 128K](docs/images/model-capabilities-official.png)
 
 ---
 
