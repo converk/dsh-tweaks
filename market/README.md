@@ -23,7 +23,7 @@
 | 每个 `package.json` 声明 `dsh.bundle` + 仓库根有 `cordis.patch.yml` | ✅ 三个都有 |
 | 仓库有真实可用代码 | ✅ |
 | 三个包声明 `files` / `repository` / `engines`，且不是 `private` | ✅ |
-| npm 包名可用 | ✅ `dsh-tweaks-prompt-history`、`dsh-tweaks-model-capabilities`、`dsh-tweaks-turn-file-revert` 均未被占用 |
+| npm 包已发布 | ✅ 三个包均已在 npm 上线 0.1.0（`dsh-tweaks-prompt-history` / `-model-capabilities` / `-turn-file-revert`） |
 | 仓库加 `dsh-plugin` topic | ⬜ **待做**（GitHub 仓库页 → About 齿轮 → Topics） |
 | 仓库创建满 1 天 | ⏳ 首个提交是 2026-09-10 18:34，**2026-09-11 18:34 之后**提 PR 才会过 CI |
 | 描述与代码相符、无营销词 | ✅ 已按代码核对（描述里的能力/适配器都对得上） |
@@ -50,7 +50,9 @@ git push -u origin add-converk-dsh-tweaks
 
 ## 4. 发布 npm 包（预构建路线）
 
-三个包已经配置好 `prepack: npm run build`，所以**不用手动先构建**：
+**当前状态：三个包已于 0.1.0 发布上线**，本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
+
+以后发新版时，三个包已经配置好 `prepack: npm run build`，**不用手动先构建**：
 
 ```powershell
 npm login
