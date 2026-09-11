@@ -9,7 +9,11 @@ export const LOCALE_NS = 'turn-file-revert'
 
 /** 中文文案。 */
 export const zh: Record<string, string> = {
+  label: '本轮改动情况：',
+  addedLines: '+{count} 行',
+  removedLines: '−{count} 行',
   files: '{count} 个文件',
+  notLatest: '该轮对话改动现在不支持撤回/恢复',
   revertAll: '撤回全部修改',
   reapplyAll: '重新应用修改',
   reverting: '撤回中…',
@@ -28,7 +32,11 @@ export const zh: Record<string, string> = {
 
 /** 英文文案。 */
 export const en: Record<string, string> = {
+  label: 'Changes this turn:',
+  addedLines: '+{count} lines',
+  removedLines: '−{count} lines',
   files: '{count} files',
+  notLatest: 'Only the latest turn of this session can be reverted or reapplied',
   revertAll: 'Revert all changes',
   reapplyAll: 'Reapply changes',
   reverting: 'Reverting…',
