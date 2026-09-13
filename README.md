@@ -11,6 +11,7 @@
 - [prompt-history —— 输入框里的历史提示词](#prompt-history--输入框里的历史提示词)
 - [model-capabilities —— 给模型行补上「思考强度 / 多模态 / 容量」](#model-capabilities--给模型行补上思考强度--多模态--容量)
 - [turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)
+- [git-bash-terminal-tool —— 可将 Windows 环境下的终端工具替换为 Git Bash](#git-bash-terminal-tool--可将-windows-环境下的终端工具替换为-git-bash)
 - [安装](#安装)
 
 ---
@@ -101,10 +102,38 @@
 
 ---
 
+## git-bash-terminal-tool —— 可将 Windows 环境下的终端工具替换为 Git Bash
+
+**它能做什么**
+
+Windows 上 DSH 默认让模型用 PowerShell（工具名 `pwsh`）执行命令。这个插件把它换成 **Git Bash**，
+并且**对所有 preset 生效**（standard / ptc / cordis / minimal）——不改 DSH 源码，也不改任何 preset 文件。
+
+- 模型看到的工具叫 `bash`，描述是 Git Bash 方言（POSIX 路径、`$VAR`）；`pwsh` 从工具目录里消失；
+- system prompt 里的 PowerShell 段被压掉，换成 bash 那段；
+- 终端卡片、退出码 pill、后台任务、沙箱拒绝与升级，表现与官方一致。
+
+**怎么用**
+
+1. 打开 **设置 → 通用 → 终端工具**（插件只在 Windows 上挂载，其他平台这一行根本不存在）。
+   默认是 **PowerShell（pwsh）**，这里只有两个工具选项 —— 插件**不会自动替你选**。
+2. 点 **Git Bash（bash）**：这时才出现「Git Bash 路径」与 **自动发现** 按钮（切回 pwsh 就又收起来）。
+3. 点 **自动发现**：扫描 Git for Windows / MSYS2 / Cygwin，把**第一个可用** `bash.exe` 填进路径栏并记住它；
+   找到多条 git 路径时，路径栏会变成**下拉列表**，重启 DSH 后依然可选。
+4. **开一个新会话**即生效。
+
+> 不用 WSL 的 `bash`：`System32` 与 `WindowsApps` 下的 `bash.exe` 会被硬排除。
+> 只有**极简模式（minimal）**受影响：它原本是持久 shell，会被换成一次性 Git Bash（PTY 后端在 Windows 上走不通）。
+> 其他三个官方预设（standard / ptc / cordis）本来就是一次性 shell，不受影响。
+
+详细说明（含排障与已知限制）见 [`plugins/git-bash-terminal-tool/README.md`](./plugins/git-bash-terminal-tool/README.md)。
+
+---
+
 ## 安装
 
 下载本仓库，然后安装需要的插件。各插件互相独立，下方以 **prompt-history** 为例，把名称换成
-对应插件所在目录名（如 `model-capabilities`、`turn-file-revert`）即可：
+对应插件所在目录名（如 `model-capabilities`、`turn-file-revert`、`git-bash-terminal-tool`）即可：
 
 ```
 npx @deepseek-ai/dsh plugin --profile web add "<仓库目录>/plugins/prompt-history"
