@@ -1,0 +1,9 @@
+# dsh bundle patch：安装本插件时把自身插入 profile 的插件树。
+#
+# `disabled` 让这一行**只在 Windows 上挂载**（与 dsh-base 里
+# `bash-sandbox` / `tool-pwsh` 同一写法）：非 win32 时 host 半区的 `apply`
+# 不会执行、client bundle 也不进启动图 —— 插件等于没装。
+- insert:
+    - id: git-bash-terminal-tool
+      name: dsh-tweaks-git-bash-terminal-tool
+      disabled: !!js process.platform !== 'win32'
