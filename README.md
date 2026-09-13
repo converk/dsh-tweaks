@@ -1,8 +1,17 @@
 # dsh-tweaks
 
-给 **DSH（DeepSeek Harness）** 装的三个小插件：装上就直接用，不用改 DSH 本身。
+给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
 
-> 适配 DSH **0.1.5-rc.1**（当前最高支持的版本；更高版本未验证）。
+> 适配 DSH **0.1.5-rc.1**。
+
+---
+
+## 目录
+
+- [prompt-history —— 输入框里的历史提示词](#prompt-history--输入框里的历史提示词)
+- [model-capabilities —— 给模型行补上「思考强度 / 多模态 / 容量」](#model-capabilities--给模型行补上思考强度--多模态--容量)
+- [turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)
+- [安装](#安装)
 
 ---
 
@@ -94,13 +103,13 @@
 
 ## 安装
 
-下载本仓库，然后安装需要的插件。三个插件互相独立，下方以 **prompt-history** 为例，另外两个把
-名称换成 `model-capabilities`、`turn-file-revert` 即可：
+下载本仓库，然后安装需要的插件。各插件互相独立，下方以 **prompt-history** 为例，把名称换成
+对应插件所在目录名（如 `model-capabilities`、`turn-file-revert`）即可：
 
-```powershell
-npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\prompt-history"
+```
+npx @deepseek-ai/dsh plugin --profile web add "<仓库目录>/plugins/prompt-history"
 ```
 
 安装完成后重启 DSH，并在浏览器中强制刷新（`Ctrl + Shift + R`）。
 
-> 其中 `web` 为 DSH 的 profile 名称，可在 `C:\Users\你的用户名\.dsh\profiles\` 下确认。
+> `<仓库目录>` 指你把本仓库下载（克隆）到的目录；`web` 为 DSH 的 profile 名称，其配置在 DSH 主目录下的 `profiles/` 里：默认即用户目录下的 `~/.dsh`（Windows 为 `%USERPROFILE%\.dsh`），若设置了 `DSH_HOME` 则以其为准。
