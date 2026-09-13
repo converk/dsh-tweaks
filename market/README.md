@@ -6,7 +6,11 @@
 
 ## 1. 这次要提交的东西
 
-三个插件 = 三个条目文件，路径固定为 `data/plugins/<owner>__<repo>--<子路径把 / 换成 ->.yml`：
+**状态**：前三个插件（prompt-history / model-capabilities / turn-file-revert）的条目已于 2026-09-11
+合并进上游（PR [#4862](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/4862)）；
+`git-bash-terminal-tool` 已在 npm 上线 0.1.0，走**独立 PR**
+（[#5040](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/5040)）。
+条目文件路径固定为 `data/plugins/<owner>__<repo>--<子路径把 / 换成 ->.yml`：
 
 | 本目录下的文件 | 拷贝到目标仓库的路径 |
 |---|---|
