@@ -14,8 +14,8 @@ __pycache__/
 *.pyc
 .venv/
 
-# 设计/计划文档（本地保留，不提交）
-docs/
+# 设计/计划文档（本地保留，不提交；docs/images 下的截图仍要入库）
+docs/plans/
 
 # IDE / 系统
 .idea/

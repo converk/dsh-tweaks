@@ -122,6 +122,8 @@ Windows 上 DSH 默认让模型用 PowerShell（工具名 `pwsh`）执行命令�
    找到多条 git 路径时，路径栏会变成**下拉列表**，重启 DSH 后依然可选。
 4. **开一个新会话**即生效。
 
+![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](docs/images/git-bash-terminal-tool.png)
+
 > 不用 WSL 的 `bash`：`System32` 与 `WindowsApps` 下的 `bash.exe` 会被硬排除。
 > 只有**极简模式（minimal）**受影响：它原本是持久 shell，会被换成一次性 Git Bash（PTY 后端在 Windows 上走不通）。
 > 其他三个官方预设（standard / ptc / cordis）本来就是一次性 shell，不受影响。

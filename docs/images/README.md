@@ -10,3 +10,4 @@
 | `turn-file-revert-modified.png` | turn-file-revert | 本轮有改动：`本轮改动情况：` 统计 + 可点的「撤回全部修改」 |
 | `turn-file-revert-reverted.png` | turn-file-revert | 撤回后：「重新应用修改」+「已撤回本回合修改」 |
 | `turn-file-revert-latest-only.png` | turn-file-revert | 更早回合：按钮置灰，hover 提示「该轮对话改动现在不支持撤回/恢复」 |
+| `git-bash-terminal-tool.png` | git-bash-terminal-tool | 设置 → 通用 → 终端工具：两个工具选项 + Git Bash 路径栏与「自动发现」 |

@@ -45,6 +45,8 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 - 运行时如果这台机器/这个 DSH 版本不具备替换所需的扩展点，设置行会显示「当前版本不支持：<原因>」，
   会话**完全不受影响**（插件不抛错、不 veto，只写诊断日志）。
 
+![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/git-bash-terminal-tool.png)
+
 ## 极简模式（minimal）的影响
 
 四个官方预设里，**只有 `minimal` 的终端是「持久 shell」**：
