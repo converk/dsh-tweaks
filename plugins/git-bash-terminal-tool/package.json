@@ -1,7 +1,7 @@
 {
   "name": "dsh-tweaks-git-bash-terminal-tool",
   "description": "可将 Windows 环境下的终端工具替换为 Git Bash",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "license": "MIT",
   "repository": {
