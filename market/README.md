@@ -6,10 +6,14 @@
 
 ## 1. 这次要提交的东西
 
-**状态**：前三个插件（prompt-history / model-capabilities / turn-file-revert）的条目已于 2026-09-11
-合并进上游（PR [#4862](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/4862)）；
-`git-bash-terminal-tool` 已在 npm 上线 0.1.0，走**独立 PR**
-（[#5040](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/5040)）。
+**状态**：四个插件的条目**全部已合并进上游**——前三个（prompt-history / model-capabilities /
+turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/4862)；
+`git-bash-terminal-tool` 于 2026-09-18 经独立 PR
+[#5040](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/5040)（已 merge，见上游
+`data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`）。
+**因此日常发版（改代码 + `npm publish`）不需要再提 PR**：条目里没有版本字段，市场按
+`repository.url` + `repository.directory` 关联 npm，自动展示最新版本与下载量。
+只有**改条目元数据**（描述 / 分类）或**新增插件**才需要新开 PR。
 条目文件路径固定为 `data/plugins/<owner>__<repo>--<子路径把 / 换成 ->.yml`：
 
 | 本目录下的文件 | 拷贝到目标仓库的路径 |
@@ -17,7 +21,7 @@
 | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-turn-file-revert.yml` | `data/plugins/converk__dsh-tweaks--plugins-turn-file-revert.yml` |
-| `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml` | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`（**另开一个 PR**；已在 npm 上线 0.1.0） |
+| `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml` | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`（已合并；npm 现为 0.2.0） |
 
 一个 PR **最多 3 条**：前三个正好占满一个 PR，`git-bash-terminal-tool` 必须**另开一个独立 PR**（规范也建议"只提你愿意留下的那几个"）。
 
@@ -28,7 +32,7 @@
 | 每个 `package.json` 声明 `dsh.bundle` + 仓库根有 `cordis.patch.yml` | ✅ 三个都有 |
 | 仓库有真实可用代码 | ✅ |
 | 三个包声明 `files` / `repository` / `engines`，且不是 `private` | ✅ |
-| npm 包已发布 | ✅ 四个包均已在 npm 上线 0.1.0（`dsh-tweaks-prompt-history` / `-model-capabilities` / `-turn-file-revert` / `-git-bash-terminal-tool`） |
+| npm 包已发布 | ✅ 四个包均已上线（`dsh-tweaks-prompt-history` / `-model-capabilities` / `-turn-file-revert` 为 0.1.0；`-git-bash-terminal-tool` 为 0.2.0，需 DSH ≥ 0.1.7） |
 | 仓库加 `dsh-plugin` topic | ⬜ **待做**（GitHub 仓库页 → About 齿轮 → Topics） |
 | 仓库创建满 1 天 | ⏳ 首个提交是 2026-09-10 18:34，**2026-09-11 18:34 之后**提 PR 才会过 CI |
 | 描述与代码相符、无营销词 | ✅ 已按代码核对（描述里的能力/适配器都对得上） |
@@ -55,7 +59,7 @@ git push -u origin add-converk-dsh-tweaks
 
 ## 4. 发布 npm 包（预构建路线）
 
-**当前状态：四个包已于 0.1.0 发布上线**，本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
+**当前状态：四个包均已发布上线**（git-bash-terminal-tool 为 0.2.0，其余为 0.1.0），本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
 
 以后发新版时，四个包已经配置好 `prepack: npm run build`，**不用手动先构建**：
 

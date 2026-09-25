@@ -2,7 +2,8 @@
 
 给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
 
-> 适配 DSH **0.1.5-rc.1**。
+> 适配 DSH **0.1.7-rc.2**。其中 `git-bash-terminal-tool` 0.2.0 起用了 0.1.7 的新设置模型，
+> 需要 DSH ≥ 0.1.7；其余三个插件在 0.1.5 起即可用。
 
 ---
 
@@ -127,6 +128,10 @@ Windows 上 DSH 默认让模型用 PowerShell（工具名 `pwsh`）执行命令�
 > 不用 WSL 的 `bash`：`System32` 与 `WindowsApps` 下的 `bash.exe` 会被硬排除。
 > 只有**极简模式（minimal）**受影响：它原本是持久 shell，会被换成一次性 Git Bash（PTY 后端在 Windows 上走不通）。
 > 其他三个官方预设（standard / ptc / cordis）本来就是一次性 shell，不受影响。
+>
+> ⚠️ 从 **0.1.0 升级到 0.2.0**（随 DSH 0.1.7 的设置模型迁移）后要**重新选一次**方言/路径：
+> 旧 `settings.yaml` 里的 `terminal-tool:` 段不会被自动迁移（设置现在存在 profile patch 里）。
+> 详见插件 README 的「升级到 0.2.0（DSH 0.1.7）」。
 
 详细说明（含排障与已知限制）见 [`plugins/git-bash-terminal-tool/README.md`](./plugins/git-bash-terminal-tool/README.md)。
 

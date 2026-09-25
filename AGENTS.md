@@ -2,7 +2,7 @@
 
 本文件写**在这个仓库里开发 DSH 插件时的注意事项与踩坑经验**；项目介绍见 [README.md](./README.md)。
 
-下面的 DSH 事实基于 **0.1.5-rc.1** 实测，换 DSH 版本后请按 §2.7 重新核对，
+下面的 DSH 事实基于 **0.1.7-rc.2** 实测，换 DSH 版本后请按 §2.7 重新核对，
 **禁止凭记忆猜 Service / Slot / prop 名字**。
 
 > **文中 `<dsh>` 指 DSH 的部署目录**，也就是 `node_modules/@deepseek-ai/` 所在的那一层。
@@ -49,9 +49,9 @@ node scripts/clientsmoke.mjs     # 浏览器半区冒烟（有则写）
 
 ### 2.2 双面插件与 client bundle 协议
 
-- `package.json` 声明 `dsh.client.platform = 'web'`；**host 半区** = `main` 导出的 `apply(ctx)`
-  （纯 UI 插件就是空 apply，只用于在宿主组合树里占位）；**client 半区** = `exports["./client"]`
-  指向的**已构建** bundle。
+- `package.json` 声明 `dsh.client.platform = 'web'`；**host 半区** = `main` 导出的 `apply(ctx, config)`
+  （纯 UI 插件就是空 apply，只用于在宿主组合树里占位；要暴露可编辑设置就同时导出 `Config`，见 §2.9）；
+  **client 半区** = `exports["./client"]` 指向的**已构建** bundle。
 - bundle 必须是**经典脚本**（非 ESM），自注册工厂：
   `window.__ModuleLoader__.load({ id: '<包名>', factory: (require) => {…} })`，工厂体为 CJS，
   只允许 `require` 页面种子模块（**`react` / `react/jsx-runtime`**），并**必须带 sourcemap trailer**
@@ -94,7 +94,6 @@ node scripts/clientsmoke.mjs     # 浏览器半区冒烟（有则写）
   （只往 connection 自己的路由表塞一条记录，**完全不碰 webServer**）；
   浏览器同源 `fetch('/api/<name>', { method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify(payload) })`。信任栅栏与登录 cookie 由物理 `/api` 载体统一处理，插件不必自己鉴权。
-- 若同时注册了 RPC 通道，客户端应「先试 RPC、传输失败静默回落 fetch」（两条都可用即可用）。
 
 ### 2.5 宿主侧写文件（沙箱）
 
@@ -122,6 +121,8 @@ node scripts/clientsmoke.mjs     # 浏览器半区冒烟（有则写）
 | 工具事件（`tools/pre-execute` / `post-execute`）、ToolExecution | `dsh-tools/lib/types/index.d.ts` |
 | 会话事件（`session/event`、`tool/call{turn,callId,name,arguments}`） | `dsh-session/lib/types/*.d.ts` |
 | 文件服务、沙箱策略 | `dsh-fs/lib/types/index.d.ts`、`dsh-sandbox-policy/lib/types/index.d.ts` |
+| **设置面**：entry Config / volatile / 表单投影 | `dsh-settings/lib/types/{index,schema}.d.ts`、`schemastery/lib/types/index.d.ts` |
+| 客户端设置表单（原生 `configForms`） | `dsh-client-ui-settings/lib/types/client/config-form*.d.ts` |
 | 纯 UI 插件模板（空 host apply + dsh.client + overlay） | `dsh-client-ui-input-trigger/{package.json, lib/index.js, lib/client.js}` |
 
 类型-only 的包（`dsh-client-ui-slots` 等）在部署里**没有运行时目录**：对契约做**结构性窄化投影**
@@ -136,6 +137,43 @@ node scripts/clientsmoke.mjs     # 浏览器半区冒烟（有则写）
 禁止使用 `@deepseek-ai` 作为本仓库包 scope。
 实践基准：**纯 UI 插件可以做到运行时零依赖**——react 来自页面种子模块，DSH 契约用类型投影，
 构建期工具链（esbuild、typescript、@types/react）全部放 devDependencies。
+
+⚠️ 0.1.7 起，「有可编辑设置的插件」**必须**依赖 `@deepseek-ai/schemastery`：`Config` 得是真的
+schemastery schema，手写对象过不了 `volatileForm()`（见 §2.9）。它属白名单内的官方运行时，
+但必须写进 `dependencies` 而不是 devDependencies（发布后由使用方的 DSH 提供）。
+
+### 2.9 设置面：entry Config + volatile
+
+设置 = 插件自己那个 profile entry 的 Config，namespace 就是 **entry id**（bundle patch 里 insert 的 `id`）。
+可编辑字段必须在导出的 `Config` 里用 `.volatile()` 声明：
+
+```ts
+import z from '@deepseek-ai/schemastery'
+export const Config = z.object({ preference: z.union(['light', 'dark']).default('light').volatile() })
+export function apply(ctx, config) { const value = config.preference.get() }
+```
+
+- **`apply` 的第二个参数是解析后的 config**，volatile 字段是**稳定引用**（`Volatile<T>`）：
+  `config.x.get()` 永远是最新值，`settings.update/mutate` 落盘后由 Loader 就地更新
+  （`loader/volatile-update`）→ **不需要 watch、不需要重启**。普通字段仍是启动配置（改了要重挂载）。
+- ⚠️ **`Config` 必须是真 schemastery**（`@deepseek-ai/schemastery`，部署里就有）。
+  `dsh-settings` 的 `volatileForm()` 读 `.meta` / `.dict`，`plainSchema()` 还会
+  `new z(schema.toJSON())`；手写一个「有 `toJSON` 的 schema」过不了这两步，表现是
+  **设置行在、但读不到值也写不进去，且毫无报错**。依赖声明见 §2.8。
+- ⚠️ **schema 表达不了跨字段约束**（如「A 选了 bash 则 B 必须是存在的文件」）：
+  `update/mutate` 只跑 schemastery，不会调你的自定义校验 → 把这类校验放在**使用点**（fail safe）。
+- **宿主面是 `ctx.settings`**：`describe / update / mutate / replace / configure`，**没有 `register`** ——
+  插件不再自己注册 namespace，也不要直接写 `$DSH_HOME/settings.yaml`；持久化落在**当前 profile 的 patch**
+  （`configEditor.documentPath`，即 `profiles/<p>/cordis.patch.yml`）。
+- **浏览器面是 `ctx.configForms.get(entryId)`**（官方 `dsh-client-ui-settings`）：拿到的 `ConfigForm`
+  有 `getSnapshot / subscribe / mutate / set / unset`。没有这个服务时才退回家族兼容层的
+  `webUiSettings.bind({ namespace })`（契约同形，namespace 也必须是 entry id）。
+  ⚠️ **不要把设置通道放进 `inject`**：它是可选服务，硬依赖会让条目永远 pending。
+- 用 `settings.general.item` 槽自建一行时，服务通常晚于本插件激活：用
+  `ctx.inject([...], () => …)` 等它出现再登记席位（服务晚到时 `ctx.get` 只是 undefined）。
+- 验证套路（不开浏览器）：`dsh-settings/lib/types/schema.js` 的 `volatileForm(Config)` 必须返回一个
+  object 表单；自测里用**部署里的真件**复核（参考
+  `plugins/git-bash-terminal-tool/scripts/selftest.mjs` 的「用部署里的 dsh-settings 复核 volatileForm」）。
 
 ## 3. 插件独立性（强制）
 
@@ -184,8 +222,8 @@ plugins/<name>/
 ├── README.md        # 面向用户：功能 / 怎么用 / 安装 / 效果图
 ├── scripts/*.mjs    # selftest（宿主 + 纯逻辑）、clientsmoke（bundle 协议 + apply）
 └── src/
-    ├── index.ts     # host 半区（纯 UI 插件 = 空 apply）
-    ├── host/        # 宿主侧：服务、事件监听、RPC/Fetch 路由、诊断日志
+    ├── index.ts     # host 半区（纯 UI 插件 = 空 apply；有设置则导出 Config + apply(ctx, config)）
+    ├── host/        # 宿主侧：服务、事件监听、/api Fetch 路由、诊断日志
     ├── shared/      # host/client 共用纯逻辑（无 node / DOM / React 依赖）
     └── client/      # 浏览器半区：Slot 注册 + 组件 + 类型投影
 ```
@@ -201,3 +239,19 @@ plugins/<name>/
 - 核对 client 半区是否进了启动图（不开浏览器）：用只含 Host 半区的动态插件注册工具，返回
   `ctx.get('clientModules').graph().entries` 与 `clientPath('<包名>')`；
   注意动态沙箱**不允许**读 `connection` 这类返回 cordis Context 的服务。
+
+## 7. 发布（npm）
+
+每个插件是独立 npm 包，版本号在各自 `package.json` 里（`prepack` 会自动 `node build.mjs`）。
+
+- **手动发布**：`cd plugins/<name> && npm publish`。token 的 **scope 必须覆盖该包** ——
+  无 scope 的包（如 `dsh-tweaks-*`）要在 granular token 里选 **All packages**，
+  只选 `@<user>` 会被 403 挡下。
+- **CI 发布（推荐）**：`.github/workflows/publish.yml` 走 **trusted publishing（GitHub OIDC）**，不需要 token：
+  ```powershell
+  git tag git-bash-terminal-tool/v0.2.0
+  git push origin git-bash-terminal-tool/v0.2.0
+  ```
+  tag 形如 `<插件目录名>/v<版本>`，版本必须与 `package.json` 一致；也可在 Actions 页手动 dispatch（支持 dry-run）。
+  一次性配置：npmjs.com → 包 → Settings → Trusted publishing → GitHub Actions，
+  repo `converk/dsh-tweaks`、workflow `publish.yml` —— **每个包各配一次**。
