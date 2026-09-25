@@ -17,6 +17,10 @@ __pycache__/
 # 设计/计划文档（本地保留，不提交；docs/images 下的截图仍要入库）
 docs/plans/
 
+# 本地一次性扫描 / 报告（含个人机器信息，不入库）
+.scan/
+c-drive-cleanup-report.md
+
 # IDE / 系统
 .idea/
 .vscode/
