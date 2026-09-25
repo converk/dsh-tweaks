@@ -6,18 +6,18 @@
  * host 的 `ctx.shell`**。
  *
  * 本文件只做装配，三块逻辑各自独立：
- * - `host/settings.ts` 登记 `terminal-tool` namespace（默认 pwsh + 校验）；
+ * - `host/settings.ts` 声明 entry Config（volatile 字段 + 默认值，namespace = entry id）；
  * - `host/routes.ts` 开两条 `/api` 精确路由给设置行取数；
  * - `host/replace.ts` 在 `agent/session-start` 时按设置做 per-agent 替换。
  *
  * `inject` 故意保持为空（AGENTS.md §2.1：可选服务用 `ctx.get` + 判空），
  * 这样 headless 组合里也能挂上，服务缺失时只降级、不抛错。
  */
+import { readSettings, validateSettings } from './host/settings.js'
 import { registerReplacement } from './host/replace.js'
 import { registerRoutes } from './host/routes.js'
-import { registerTerminalToolSettings, validateSettings, SETTINGS_DEFAULTS } from './host/settings.js'
 import { diag } from './host/diag.js'
-import type { CapabilityProbeInput, HostContextLike, SettingsProviderLike, TerminalToolSettings } from './host/types.js'
+import type { CapabilityProbeInput, HostContextLike, TerminalToolSettings } from './host/types.js'
 import type { ReplaceReport } from './shared/protocol.js'
 
 /** 本插件没有硬依赖：所有服务都用 `ctx.get` 读，缺失时降级。 */
@@ -27,11 +27,12 @@ export const inject: string[] = []
  * 供 Node 侧自测直接驱动纯逻辑（不经过 cordis 运行时）。
  *
  * 这里刻意只再导出 **纯逻辑**：发现算法、设置解析/校验、工具定义与渲染、
- * 升级契约、替换判定。自测（`scripts/selftest.mjs`）只 import `lib/index.js`，
- * 因此这份清单同时验证了「host bundle 可加载 + 零 @deepseek-ai 运行时依赖」。
+ * 升级契约、替换判定，以及 entry Config 本身。自测（`scripts/selftest.mjs`）只
+ * import `lib/index.js`，因此这份清单同时验证了「host bundle 可加载 +
+ * `Config` 是 Loader 认得的 schemastery schema」。
  */
+export { Config, readSettings, resolveSettings, validateSettings, SETTINGS_DEFAULTS } from './host/settings.js'
 export { discoverBash, isBlockedBash, validateBashPath } from './host/discover.js'
-export { validateSettings, resolveSettings, createSettingsSchema, SETTINGS_DEFAULTS } from './host/settings.js'
 export {
   createBashTool,
   renderResult,
@@ -80,82 +81,54 @@ export function probeDeploymentCapability(input: CapabilityProbeInput): {
 /**
  * 宿主插件体。
  * @param ctx - 宿主上下文。
+ * @param config - Loader 解析后的 entry Config（volatile 字段是稳定引用）；无 Loader 时缺省。
  */
-export function apply(ctx: HostContextLike): void {
+export function apply(ctx: HostContextLike, config?: unknown): void {
   const state: {
-    settings: TerminalToolSettings
-    namespaceRegistered: boolean
     lastReplace?: ReplaceReport | undefined
     applied: boolean
     agents: number
   } = {
-    settings: { ...SETTINGS_DEFAULTS, bashCandidates: [] },
-    namespaceRegistered: false,
     applied: false,
     agents: 0,
   }
 
   diag(`apply: platform=${process.platform} pid=${String(process.pid)}`)
 
-  // 1) 设置 namespace（可选服务：拿不到就只降级，不抛）。
-  const settingsHandleHolder: { handle?: { get(): TerminalToolSettings; watch(cb: (next: TerminalToolSettings) => void): () => void } | undefined } = {}
-  const attachSettings = (target: HostContextLike): void => {
-    const settings = target.get('settings') as SettingsProviderLike | undefined
-    if (settings === undefined || settings === null || typeof settings.register !== 'function') {
-      diag('apply: ctx.settings is not visible')
-      return
-    }
-    const handle = registerTerminalToolSettings(
-      settings as Parameters<typeof registerTerminalToolSettings>[0],
-      (message) => {
-        diag(`settings: register failed: ${message}`)
-        state.namespaceRegistered = false
-      },
-    )
-    if (handle === undefined) return
-    state.namespaceRegistered = true
-    state.settings = handle.get()
-    settingsHandleHolder.handle = handle
-    handle.watch((next) => {
-      // 只更新 host 侧快照；**运行中的会话不受影响**（决策 B）。
-      state.settings = next
-      diag(
-        `settings: dialect=${next.dialect} bashPath="${next.bashPath}" candidates=${String(next.bashCandidates.length)}（新会话生效）`,
-      )
-    })
-    // 启动时校验一次当前值：选择 bash 但路径无效 → 打一行诊断，便于排查。
-    try {
-      validateSettings(state.settings)
-    } catch (error) {
-      diag(`settings: current value is invalid: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    diag(`settings: registered ${state.settings.dialect} bashPath="${state.settings.bashPath}"`)
+  /**
+   * 读当前设置。volatile 引用由 Loader 就地更新，所以**每次会话启动读一次**就是
+   * 「新会话生效」的语义（决策 B）：运行中的会话保持启动时的选择。
+   */
+  const settingsForSession = (): TerminalToolSettings => readSettings(config)
+
+  // 启动时校验一次当前值：选择 bash 但路径无效 → 打一行诊断，便于排查。
+  // （schema 表达不了跨字段约束，校验在使用点；这里只是提前留痕。）
+  try {
+    validateSettings(settingsForSession())
+  } catch (error) {
+    diag(`settings: current value is invalid: ${error instanceof Error ? error.message : String(error)}`)
   }
+  const current = settingsForSession()
+  diag(
+    `settings: dialect=${current.dialect} bashPath="${current.bashPath}" candidates=${String(current.bashCandidates.length)}（新会话生效）`,
+  )
 
-  if (typeof ctx.inject === 'function') ctx.inject(['settings'], (scoped) => attachSettings(scoped))
-  else attachSettings(ctx)
-
-  // 2) 两条 `/api` 路由。
+  // 1) 两条 `/api` 路由。
   registerRoutes(ctx, {
-    readSettings: () => state.settings,
+    readSettings: () => settingsForSession(),
     capability: () =>
       probeDeploymentCapability({
         platform: process.platform,
         hasTools: hasService(ctx, 'tools'),
         hasSystemPrompt: hasService(ctx, 'systemPrompt'),
-        hasSettings: state.namespaceRegistered,
+        hasSettings: hasService(ctx, 'settings'),
         shellSandboxMode: readShellSandboxMode(ctx),
       }),
-    namespaceRegistered: () => state.namespaceRegistered,
+    settingsAvailable: () => hasService(ctx, 'settings'),
     lastReplace: () => state.lastReplace,
   })
 
-  // 3) per-agent 替换（核心机制）。
-  const settingsForSession = (): TerminalToolSettings => {
-    const handle = settingsHandleHolder.handle
-    if (handle !== undefined) return handle.get()
-    return state.settings
-  }
+  // 2) per-agent 替换（核心机制）。
   registerReplacement({
     host: ctx,
     settings: settingsForSession,
@@ -193,4 +166,3 @@ function hasService(ctx: HostContextLike, name: string): boolean {
     return false
   }
 }
-

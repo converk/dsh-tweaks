@@ -5,9 +5,12 @@
  * 1. `lib/client.js` 是**经典脚本**（不是 ESM），用 `window.__ModuleLoader__.load` 自注册；
  * 2. 工厂体是 CJS，只 `require` 页面种子模块（`react` / `react/jsx-runtime`）；
  * 3. 带**合法 v3 sourcemap trailer**；
- * 4. 工厂里 `exports.inject` 声明了 `slots` / `locale` / `settingsScope`
- *    —— 漏了它会「装上了但什么都不注册」且毫无日志；
+ * 4. 工厂里 `exports.inject` 声明了 `slots` / `locale`
+ *    —— 漏了它会「装上了但什么都不注册」且毫无日志；设置通道**不进** `inject`
+ *    （0.1.7 起官方没有 `settingsScope`，声明成硬依赖会让条目永远 pending）；
  * 5. `apply(ctx)` 真的往 `settings.general.item` 注册了一行，id / order / locale 符合预期；
+ * 5b. 设置通道名随宿主版本变化：`webUiSettings`（0.1.7 兼容层）/ `settingsScope`（旧宿主）
+ *     都能用；都没就绪时改为等 `webUiSettings` 出现再登记；
  * 6. 行组件在**非 win32** 与**平台未知**时不渲染（需求 2），win32 时渲染出来。
  *
  * ⚠️ 测试 renderer 的两个关键模拟（不对齐它们会得到假失败）：
@@ -42,6 +45,9 @@ function section(title) {
 const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 const map = JSON.parse(readFileSync(new URL('../lib/client.js.map', import.meta.url), 'utf8'))
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+// bundle patch 里 insert 的 entry id：0.1.7 的设置 namespace 必须与它逐字一致。
+const patchYml = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+const patchEntryId = /^\s*-\s*id:\s*([^\s#]+)/m.exec(patchYml)?.[1]
 
 /**
  * 最小 react 桩 + 极简 renderer（真调用函数组件类型，render 后 flush effect）。
@@ -132,8 +138,8 @@ section('bundle 协议')
 const exportsObject = loadFactory(async () => ({ ok: true, status: 200, json: async () => ({}) })).factory(factoryRequire)
 check('工厂返回 apply', typeof exportsObject.apply === 'function')
 check(
-  '客户端 inject 声明 slots / locale / settingsScope',
-  JSON.stringify([...exportsObject.inject].sort()) === JSON.stringify(['locale', 'settingsScope', 'slots']),
+  '客户端 inject 只声明 slots / locale（设置通道不硬依赖）',
+  JSON.stringify([...exportsObject.inject].sort()) === JSON.stringify(['locale', 'slots']),
   JSON.stringify(exportsObject.inject),
 )
 
@@ -168,7 +174,7 @@ section('apply：注册 settings.general.item')
         ? slots
         : name === 'locale'
           ? locale
-          : name === 'settingsScope'
+          : name === 'webUiSettings'
             ? {
                 bind: (spec) => {
                   boundNamespaces.push(spec.namespace)
@@ -213,13 +219,162 @@ section('apply：注册 settings.general.item')
     localeCalls.length === 2 && localeCalls[0].keys === localeCalls[1].keys,
     JSON.stringify(localeCalls),
   )
-  check('settingsScope 绑定到 terminal-tool', boundNamespaces.join(',') === 'terminal-tool', boundNamespaces.join(','))
+  check(
+    'webUiSettings 绑定到 entry id（0.1.7 的设置寻址）',
+    boundNamespaces.join(',') === 'git-bash-terminal-tool',
+    boundNamespaces.join(','),
+  )
+  check(
+    '绑定的 namespace 就是 cordis.patch.yml 里的 entry id',
+    patchEntryId === boundNamespaces[0],
+    `patch=${patchEntryId} bind=${boundNamespaces[0]}`,
+  )
   check(
     'bind 传了 decode（读值不依赖 hand-written wire schema）',
     typeof boundSpecs[0]?.decode === 'function',
     typeof boundSpecs[0]?.decode,
   )
   check('组件是函数', typeof registered[0]?.component === 'function')
+}
+
+// --- 设置通道：宿主版本差异（0.1.7 的 webUiSettings / 0.1.5 的 settingsScope）---
+
+section('设置通道：宿主版本差异')
+
+/**
+ * 造一个 apply 用的假 ctx：`names` 是提供设置通道的服务名数组，可随时改（模拟服务晚到）。
+ * @param names - 当前提供设置通道的服务名。
+ * @returns ctx 与登记/绑定/等待记录。
+ */
+function makeApplyCtx(names) {
+  const registered = []
+  const boundNamespaces = []
+  const pending = []
+  const binder = {
+    bind: (spec) => {
+      boundNamespaces.push(spec.namespace)
+      return {
+        getSnapshot: () => ({
+          status: 'ready',
+          value: { dialect: 'pwsh', bashPath: '' },
+          writable: true,
+          mode: 'host',
+          revision: 1,
+          base: undefined,
+          user: undefined,
+        }),
+        subscribe: () => () => undefined,
+        mutate: async () => undefined,
+        set: async () => undefined,
+        unset: async () => undefined,
+      }
+    },
+  }
+  const slots = {
+    inject: (_key, callback) => {
+      callback()
+      return () => undefined
+    },
+    register: (options, component) => {
+      registered.push({ options, component })
+      return () => undefined
+    },
+  }
+  const ctx = {
+    get: (name) =>
+      name === 'slots'
+        ? slots
+        : name === 'locale'
+          ? { register: () => () => undefined, bind: () => (key) => key }
+          : names.includes(name)
+            ? binder
+            : undefined,
+    effect: (run) => {
+      run()
+      return () => undefined
+    },
+    inject: (services, callback) => {
+      pending.push({ services: [...services], callback })
+      return () => undefined
+    },
+  }
+  return { ctx, registered, boundNamespaces, pending, binder }
+}
+
+{
+  const live = makeApplyCtx(['webUiSettings'])
+  exportsObject.apply(live.ctx)
+  check('新宿主：webUiSettings 直接登记席位', live.registered.length === 1, String(live.registered.length))
+  check(
+    '新宿主：绑定到 entry id',
+    live.boundNamespaces.join(',') === 'git-bash-terminal-tool',
+    live.boundNamespaces.join(','),
+  )
+}
+{
+  const legacy = makeApplyCtx(['settingsScope'])
+  exportsObject.apply(legacy.ctx)
+  check('旧宿主：只有 settingsScope 时回退登记', legacy.registered.length === 1, String(legacy.registered.length))
+}
+{
+  const names = []
+  const late = makeApplyCtx(names)
+  exportsObject.apply(late.ctx)
+  check('通道未就绪时不登记半截行', late.registered.length === 0, String(late.registered.length))
+  check(
+    '通道未就绪时同时等 webUiSettings 与 configForms',
+    late.pending.length === 2 &&
+      late.pending.map((entry) => entry.services.join(',')).sort().join('|') === 'configForms|webUiSettings',
+    JSON.stringify(late.pending.map((entry) => entry.services)),
+  )
+  names.push('webUiSettings')
+  late.pending[0].callback()
+  check('服务到位后补登记席位', late.registered.length === 1, String(late.registered.length))
+}
+{
+  // 普通 0.1.7 部署：没有家族兼容层，只有官方原生 configForms。
+  const registered = []
+  const gotEntryIds = []
+  const nativeForm = {
+    getSnapshot: () => ({ status: 'ready', value: { dialect: 'bash', bashPath: 'D:/x/bash.exe', bashCandidates: [] }, base: undefined, user: undefined, revision: 1, writable: true, mode: 'host' }),
+    subscribe: () => () => undefined,
+    mutate: async () => true,
+    set: async () => true,
+    unset: async () => true,
+  }
+  const slots = {
+    inject: (_key, callback) => {
+      callback()
+      return () => undefined
+    },
+    register: (options, component) => {
+      registered.push({ options, component })
+      return () => undefined
+    },
+  }
+  const ctx = {
+    get: (name) =>
+      name === 'slots'
+        ? slots
+        : name === 'locale'
+          ? { register: () => () => undefined, bind: () => (key) => key }
+          : name === 'configForms'
+            ? {
+                get: (entryId) => {
+                  gotEntryIds.push(entryId)
+                  return nativeForm
+                },
+              }
+            : undefined,
+    effect: (run) => {
+      run()
+      return () => undefined
+    },
+    inject: () => () => undefined,
+  }
+  exportsObject.apply(ctx)
+  check('原生宿主：没有 webUiSettings 时用 configForms.get(entryId)', registered.length === 1, String(registered.length))
+  check('原生宿主：按 entry id 取表单', gotEntryIds.join(',') === 'git-bash-terminal-tool', gotEntryIds.join(','))
 }
 
 // --- 行组件：渲染闸门 + 路径栏的出现时机 -------------------------------------
@@ -229,7 +384,7 @@ section('行组件：渲染闸门与路径栏时机')
 /**
  * 挂载行组件，用假的 `/state` + 假的 settingsScope 驱动，返回最终渲染出的树。
  * @param state - 假的 `/state` 响应体。
- * @param settings - 假的 `terminal-tool` 设置值；不给就模拟 scope 还没就绪（走 host 快照）。
+ * @param settings - 假的设置值；不给就模拟 scope 还没就绪（走 host 快照）。
  * @returns 展平后的元素树。
  */
 async function renderRow(state, settings) {
@@ -328,7 +483,7 @@ const linuxTree = await renderRow({
   platform: 'linux',
   dialect: 'pwsh',
   bashPath: '',
-  namespaceRegistered: true,
+  settingsAvailable: true,
   capability: { supported: false },
 })
 check('非 win32（platform=linux）渲染 null', linuxTree === null, JSON.stringify(linuxTree))
@@ -337,14 +492,14 @@ const loadingTree = await renderRow({
   platform: '',
   dialect: 'pwsh',
   bashPath: '',
-  namespaceRegistered: false,
+  settingsAvailable: false,
   capability: { supported: false },
 })
 check('平台未知（加载中）渲染 null', loadingTree === null, JSON.stringify(loadingTree))
 
 // 需求 1 + 3：默认（pwsh）只有两个可点的工具选项，没有路径栏、没有自动发现按钮。
 const pwshTree = await renderRow(
-  { platform: 'win32', dialect: 'pwsh', bashPath: '', namespaceRegistered: true, capability: { supported: true } },
+  { platform: 'win32', dialect: 'pwsh', bashPath: '', settingsAvailable: true, capability: { supported: true } },
   { dialect: 'pwsh', bashPath: '', bashCandidates: [] },
 )
 check('win32 时渲染出设置行', pwshTree !== null && pwshTree !== undefined, JSON.stringify(pwshTree))
@@ -363,7 +518,7 @@ check('默认（pwsh）不显示自动发现按钮', !pwshJson.includes('row.dis
 
 // 需求 1 + 2：切到 bash 才出现路径栏与「自动发现」；单条路径是输入框。
 const bashTree = await renderRow(
-  { platform: 'win32', dialect: 'bash', bashPath: '', namespaceRegistered: true, capability: { supported: true } },
+  { platform: 'win32', dialect: 'bash', bashPath: '', settingsAvailable: true, capability: { supported: true } },
   { dialect: 'bash', bashPath: 'D:/env/msys2/usr/bin/bash.exe', bashCandidates: [] },
 )
 const bashJson = JSON.stringify(bashTree)
@@ -382,7 +537,7 @@ check('候选清单（可用候选/来源/版本）已不再渲染', !bashJson.i
 
 // 需求 2：多条 git 路径 → 路径栏变成下拉列表。
 const multiTree = await renderRow(
-  { platform: 'win32', dialect: 'bash', bashPath: '', namespaceRegistered: true, capability: { supported: true } },
+  { platform: 'win32', dialect: 'bash', bashPath: '', settingsAvailable: true, capability: { supported: true } },
   {
     dialect: 'bash',
     bashPath: 'D:/env/msys2/usr/bin/bash.exe',

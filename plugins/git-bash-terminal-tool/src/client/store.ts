@@ -1,5 +1,6 @@
 /**
- * 设置行的状态源：`settingsScope`（持久化）+ 宿主 `/api`（平台、能力探测、扫描）。
+ * 设置行的状态源：entry Config 表单（`webUiSettings` 绑定，持久化）+ 宿主 `/api`
+ * （平台、能力探测、扫描）。
  *
  * 一切都是手写的小 store（`getState` / `subscribe`），供 `row.tsx` 用
  * `useSyncExternalStore` 订阅 —— React 18 的官方 API，不需要额外依赖。
@@ -37,10 +38,10 @@ export interface RowState {
   readonly savedCandidates: readonly string[]
   /** 本次会话里「自动发现」扫到的可用路径（仅内存）。 */
   readonly scanned: readonly string[]
-  /** settingsScope 是否可写（memory 模式或未就绪时不可写）。 */
+  /** 设置表单是否可写（memory 模式或未就绪时不可写）。 */
   readonly writable: boolean
-  /** 宿主半区是否挂上（namespace 是否登记）。 */
-  readonly namespaceRegistered: boolean
+  /** 宿主设置服务是否可见（设置表单可写）。 */
+  readonly settingsAvailable: boolean
   /** capability：不支持时的原因。 */
   readonly supported: boolean
   readonly unsupportedReason?: string | undefined
@@ -102,7 +103,7 @@ export const INITIAL_ROW_STATE: RowState = {
   savedCandidates: [],
   scanned: [],
   writable: false,
-  namespaceRegistered: false,
+  settingsAvailable: false,
   supported: false,
   discovering: false,
   saving: false,
@@ -167,7 +168,7 @@ function messageOf(error: unknown): string {
 
 /**
  * 创建控制器。
- * @param scope - `settingsScope.bind({ namespace: 'terminal-tool' })` 的结果（可为 undefined）。
+ * @param scope - `webUiSettings.bind({ namespace: '<entry id>' })` 的结果（可为 undefined）。
  * @param translate - 文案函数。
  * @returns 控制器。
  */
@@ -208,7 +209,7 @@ export function createRowController(
         if (!active) return
         store.setState({
           platform: state.platform,
-          namespaceRegistered: state.namespaceRegistered,
+          settingsAvailable: state.settingsAvailable,
           supported: state.capability.supported,
           ...(state.capability.reason !== undefined ? { unsupportedReason: state.capability.reason } : {}),
           ...(state.capability.shellSandboxMode !== undefined ? { shellSandboxMode: state.capability.shellSandboxMode } : {}),
@@ -241,7 +242,12 @@ export function createRowController(
     store.setState({ saving: true })
     scope
       .mutate(ops)
-      .then(() => {
+      .then((accepted: unknown) => {
+        // 0.1.7 的原生表单用 resolve(false) 表示宿主拒绝；旧 settingsScope 只 resolve undefined。
+        if (accepted === false) {
+          store.setState({ saving: false, error: translate('row.rejected') })
+          return
+        }
         store.setState({ saving: false, error: undefined })
       })
       .catch((error: unknown) => {

@@ -15,7 +15,9 @@
  * - `shellEnv.collect`：`dsh-shell-env/lib/types/index.d.ts`
  * - `approval.request`：`dsh-user-approval/lib/types/index.d.ts`
  * - `connection.fetch.register`：`dsh-client-connection/lib/types/rpc.d.ts`
- * - `settings.register`：`dsh-settings/lib/types/index.d.ts`
+ * - entry Config 的 volatile 字段：`@deepseek-ai/schemastery` 的 `Schema.prototype.volatile`，
+ *   表单投影见 `dsh-settings/lib/types/schema.js` 的 `volatileForm` / `plainConfig`；
+ *   `apply(ctx, config)` 收到的 config 形状见 `cordis-plugin-loader` 的 `fiber.config`
  *
  * ⚠️ 契约变了集中改这里，不要散落到各文件。
  */
@@ -335,7 +337,7 @@ export interface ApprovalServiceLike {
 }
 
 // ---------------------------------------------------------------------------
-// connection / settings
+// connection
 // ---------------------------------------------------------------------------
 
 /** 一条精确 Fetch 路由（`ConnectionFetchRoute` 的窄化）。 */
@@ -353,43 +355,22 @@ export interface ConnectionServiceLike {
   }
 }
 
-/** schemastery 兼容的 schema：既能 resolve 值，又能给出 wire 形状。 */
-export interface SettingsSchemaLike<T> {
-  (input: unknown): T
-  toJSON(): unknown
-}
-
-/** `settings.register` 的选项（`SettingsRegisterOptions` 的窄化）。 */
-export interface SettingsRegisterOptionsLike<T> {
-  readonly base?: Partial<T> | undefined
-  readonly applies?: 'live' | 'restart' | undefined
-  /** 拒绝 schema 表达不了的跨字段约束；抛出即**拒绝这次写入**。 */
-  readonly validate?: ((value: T) => void) | undefined
-}
-
-/** 一个已注册 namespace 的 owner scope（`SettingsScope` 的窄化）。 */
-export interface SettingsScopeLike<T> {
+/**
+ * volatile Config 字段的稳定引用（`cosmokit` 的 `Volatile<T>` 的结构投影）。
+ *
+ * ⚠️ 与旧模型的 `settings.register` 返回的 scope 完全不同：这是**同一个对象**，
+ * Loader 落盘后就地更新它的快照，所以每次 `.get()` 都拿到最新值，不需要 watch，
+ * 也不需要重启。`apply(ctx, config)` 的 config 里每个 volatile 字段都是它。
+ */
+export interface VolatileLike<T> {
   get(): T
-  watch(callback: (next: T, prev: T) => void | Promise<void>): () => void
-  update(patch: object): Promise<void>
-  replace(section: object): Promise<void>
-}
-
-/** `ctx.settings` 的最小面。 */
-export interface SettingsProviderLike {
-  register<T>(
-    ns: string,
-    schema: SettingsSchemaLike<T>,
-    options?: SettingsRegisterOptionsLike<T>,
-  ): SettingsScopeLike<T>
-  get(ns: string): unknown
 }
 
 // ---------------------------------------------------------------------------
 // 本插件自己的类型
 // ---------------------------------------------------------------------------
 
-/** `terminal-tool` namespace 的值。 */
+/** 本插件 entry Config 解析后的值（三个 volatile 字段的普通快照）。 */
 export interface TerminalToolSettings {
   readonly dialect: Dialect
   readonly bashPath: string

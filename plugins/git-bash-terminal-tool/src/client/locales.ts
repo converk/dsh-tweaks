@@ -26,7 +26,8 @@ export const zh: Record<string, string> = {
   'row.newSession': '更改对新会话生效（运行中的会话保持启动时的选择）。',
   'row.notSupported': '当前版本不支持自动切换：{reason}',
   'row.saveFailed': '保存失败：{message}',
-  'row.unavailable': '宿主半区没有挂上（设置无法保存）。',
+  'row.rejected': '宿主拒绝了这次保存（revision 冲突或字段不可编辑），请刷新后重试。',
+  'row.unavailable': '宿主设置服务不可用（设置无法保存）。',
 }
 
 /** 英文文案（键集与中文一致）。 */
@@ -44,5 +45,6 @@ export const en: Record<keyof typeof zh, string> = {
   'row.newSession': 'Changes apply to new sessions (running sessions keep the shell they started with).',
   'row.notSupported': 'Not supported by this DSH version: {reason}',
   'row.saveFailed': 'Save failed: {message}',
-  'row.unavailable': 'The host half is not mounted (settings cannot be saved).',
+  'row.rejected': 'The host rejected this save (revision conflict or a non-editable field). Refresh and retry.',
+  'row.unavailable': 'Host settings service unavailable (settings cannot be saved).',
 }

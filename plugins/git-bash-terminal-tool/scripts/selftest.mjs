@@ -26,7 +26,6 @@ import {
   bashOutputSchema,
   composePath,
   createBashTool,
-  createSettingsSchema,
   discoverBash,
   escalationHintMarker,
   isBlockedBash,
@@ -36,12 +35,14 @@ import {
   probeDeploymentCapability,
   renderProcessRead,
   renderResult,
+  readSettings,
   replaceTerminalTool,
   resolveSettings,
   sandboxDenialMarker,
   validateBashPath,
   validateEscalationArgs,
   validateSettings,
+  Config,
   ESCALATION_TARGETS,
   WIDER_MODES,
 } from '../lib/index.js'
@@ -252,24 +253,65 @@ section('设置：解析与校验')
   }
 }
 
-section('设置：wire schema 的根节点（浏览器侧解码的命门）')
+section('设置：entry Config 是 Loader / 表单认得的 schemastery schema')
 {
-  const wire = createSettingsSchema().toJSON()
-  check('uid 指向一个已声明的 ref', typeof wire.uid === 'number' && wire.refs?.[wire.uid] !== undefined)
-  check(
-    '根节点是 object（绝不能是 dialect 的 union）',
-    wire.refs[wire.uid].type === 'object',
-    JSON.stringify(wire.refs[wire.uid]).slice(0, 120),
-  )
+  // 0.1.7 起设置 = 插件 entry 自己的 Config；可编辑字段必须用 .volatile() 声明，
+  // 且必须是真的 schemastery schema（dsh-settings 的 volatileForm 读 .meta/.dict）。
+  check('Config 是 schemastery schema', typeof Config === 'function' && typeof Config.toJSON === 'function')
+  check('根节点是 object（volatileForm 只从 object 的 dict 投影表单）', Config.type === 'object')
   check(
     '根节点声明了三个字段',
-    JSON.stringify(Object.keys(wire.refs[wire.uid].dict ?? {}).sort()) ===
-      JSON.stringify(['bashCandidates', 'bashPath', 'dialect']),
+    JSON.stringify(Object.keys(Config.dict ?? {}).sort()) === JSON.stringify(['bashCandidates', 'bashPath', 'dialect']),
   )
   check(
-    '每个字段都指向已声明的 ref',
-    Object.values(wire.refs[wire.uid].dict ?? {}).every((id) => wire.refs[id] !== undefined),
+    '三个字段都是 volatile（非 volatile 不会进表单、也写不进去）',
+    Object.values(Config.dict ?? {}).every((field) => field.meta?.volatile === true),
   )
+  check(
+    'schema 解析出默认值（pwsh / 空路径 / 空候选）',
+    Config({}).dialect.get() === 'pwsh' &&
+      Config({}).bashPath.get() === '' &&
+      JSON.stringify(Config({}).bashCandidates.get()) === '[]',
+  )
+  check(
+    'volatile 字段解析成稳定引用（.get()）',
+    typeof Config({}).dialect.get === 'function' && typeof Config({}).bashPath.get === 'function',
+  )
+  check(
+    '未知 dialect 被 schema 拒绝',
+    (() => {
+      try {
+        Config({ dialect: 'zsh' })
+        return false
+      } catch {
+        return true
+      }
+    })(),
+  )
+  const wire = Config.toJSON()
+  check('wire 根节点指向 object', wire.refs?.[wire.uid]?.type === 'object')
+}
+
+section('设置：readSettings（apply(ctx, config) 的读取面）')
+{
+  const fakeConfig = {
+    dialect: { get: () => 'bash' },
+    bashPath: { get: () => '  D:/x/bash.exe  ' },
+    bashCandidates: { get: () => ['D:/x/bash.exe', 'd:/X/bash.exe'] },
+  }
+  const read = readSettings(fakeConfig)
+  check('读 volatile 引用并规范化', read.dialect === 'bash' && read.bashPath === 'D:/x/bash.exe')
+  check('候选按 Windows 语义去重', JSON.stringify(read.bashCandidates) === JSON.stringify(['D:/x/bash.exe']))
+  check(
+    'config 缺失时退回默认值',
+    JSON.stringify(readSettings(undefined)) === JSON.stringify({ dialect: 'pwsh', bashPath: '', bashCandidates: [] }),
+  )
+  check(
+    '也接受普通值（无 Loader 的组合 / 纯逻辑）',
+    readSettings({ dialect: 'bash', bashPath: 'D:/y/bash.exe' }).bashPath === 'D:/y/bash.exe',
+  )
+  check('未知 dialect 退回默认', readSettings({ dialect: { get: () => 'zsh' } }).dialect === 'pwsh')
+  check('坏 config 不抛错', readSettings('nope').dialect === 'pwsh')
 }
 
 section('能力探测')
@@ -832,29 +874,38 @@ console.log(
     : '  info 用真实校验器复核：' + realValidator.entry,
 )
 
-section('设置：用真 schemastery 复核 wire schema（有部署时）')
+section('设置：用部署里的 dsh-settings 复核 volatileForm（有部署时）')
 {
   const home = process.env.DSH_STABLE_HOME
   if (home === undefined) {
-    console.log('  info 未提供 DSH_STABLE_HOME：跳过真 schemastery 复核（浏览器侧就是用它解码的）')
+    console.log('  info 未提供 DSH_STABLE_HOME：跳过 volatileForm 复核（设置表单就是它投影的）')
   } else {
     const { pathToFileURL } = await import('node:url')
-    const entry = join(home, 'node_modules/@deepseek-ai/schemastery/lib/index.mjs')
+    const schemaEntry = join(home, 'node_modules/@deepseek-ai/schemastery/lib/index.mjs')
+    // ⚠️ dsh-settings 的 exports 不暴露这个子路径，只能按文件路径 import；
+    // 它内部的裸 import 会从自己的目录解析，不受本仓库 node_modules 影响。
+    const settingsEntry = join(home, 'node_modules/@deepseek-ai/dsh-settings/lib/types/schema.js')
     try {
-      const mod = await import(pathToFileURL(entry).href)
-      const Schema = mod.Schema ?? mod.default ?? mod
-      const wire = createSettingsSchema().toJSON()
-      // 浏览器侧 SettingsSchemaService 就是这么重建 schema 再校验 section 的。
-      const schema = new Schema(JSON.parse(JSON.stringify(wire)))
-      check('重建后的根是 object', schema.type === 'object', String(schema.type))
-      const value = schema({ dialect: 'bash', bashPath: 'D:/x/bash.exe', bashCandidates: ['D:/x/bash.exe'] })
-      check('host 存的值能通过浏览器侧校验', value.dialect === 'bash' && value.bashCandidates.length === 1)
+      const schemaMod = await import(pathToFileURL(schemaEntry).href)
+      const Schema = schemaMod.Schema ?? schemaMod.default ?? schemaMod
+      const { volatileForm } = await import(pathToFileURL(settingsEntry).href)
+      // 这是 0.1.7 设置面的命门：不是真 schemastery schema 时这里返回 undefined，
+      // 表现就是「设置行在，但读不到值、也写不进去」。
+      const form = volatileForm(Config)
+      check('volatileForm 接受本插件的 Config', form !== undefined && form.type === 'object', String(form?.type))
       check(
-        '缺字段时默认值正确',
-        JSON.stringify(schema({})) === JSON.stringify({ dialect: 'pwsh', bashPath: '', bashCandidates: [] }),
+        '表单只投影出三个 volatile 字段',
+        JSON.stringify(Object.keys(form?.dict ?? {}).sort()) ===
+          JSON.stringify(['bashCandidates', 'bashPath', 'dialect']),
       )
+      // 浏览器侧 SettingsSchemaService 就是这么重建表单 schema 再校验 section 的。
+      const rebuilt = new Schema(JSON.parse(JSON.stringify(form.toJSON())))
+      check('重建后的表单根是 object', rebuilt.type === 'object', String(rebuilt.type))
+      const value = rebuilt({ dialect: 'bash', bashPath: 'D:/x/bash.exe', bashCandidates: ['D:/x/bash.exe'] })
+      check('host 存的值能通过浏览器侧校验', value.dialect === 'bash' && value.bashCandidates.length === 1)
+      check('缺字段时默认值正确', rebuilt({}).dialect === 'pwsh' && rebuilt({}).bashPath === '')
     } catch (error) {
-      check('真 schemastery 复核', false, error instanceof Error ? error.message : String(error))
+      check('dsh-settings volatileForm 复核', false, error instanceof Error ? error.message : String(error))
     }
   }
 }

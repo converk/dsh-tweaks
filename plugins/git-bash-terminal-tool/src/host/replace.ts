@@ -24,6 +24,7 @@
  */
 import { createBashTool, type BashToolRuntime } from './bash-tool.js'
 import { diag } from './diag.js'
+import { validateSettings } from './settings.js'
 import type {
   AgentContextLike,
   AgentLike,
@@ -108,6 +109,14 @@ export function replaceTerminalTool(
   if (process.platform !== 'win32') return { applied: false, reason: 'platform is not win32' }
   if (settings.dialect !== 'bash') return { applied: false, reason: 'dialect is pwsh' }
   if (settings.bashPath.length === 0) return { applied: false, reason: 'bashPath is empty' }
+
+  // 0.1.7 的 Config schema 表达不了「路径存在且非 WSL」，校验放在使用点：
+  // 不合法就跳过替换（会话照旧 pwsh），绝不注册一个指向坏路径的工具。
+  try {
+    validateSettings(settings)
+  } catch (error) {
+    return { applied: false, reason: error instanceof Error ? error.message : String(error) }
+  }
 
   const agentCtx = agent.ctx
   if (agentCtx === undefined || agentCtx === null) return { applied: false, reason: 'agent has no scoped ctx' }

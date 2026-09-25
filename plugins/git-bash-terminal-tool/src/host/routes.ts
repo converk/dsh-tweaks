@@ -1,13 +1,13 @@
 /**
  * `/api` 下的两条精确 Fetch 路由（AGENTS.md §2.4：**不要用** `ctx.connection.rpc.handle`）。
  *
- * - `POST /api/dsh-tweaks-terminal/state`    —— 平台、namespace 是否登记、当前值、能力探测。
+ * - `POST /api/dsh-tweaks-terminal/state`    —— 平台、设置服务是否可见、当前值、能力探测。
  *   **不做任何文件系统/子进程扫描**：设置行每次挂载都要读它，扫描是秒级的。
  * - `POST /api/dsh-tweaks-terminal/discover` —— 重新扫描候选（纯查询、无副作用；
  *   只在用户点「自动发现」时被调用，插件自己不会触发）。
  *
- * 写设置**不经过这里**：浏览器半区用 `ctx.settingsScope.bind({ namespace })` 直接写，
- * host 的 `validate` 负责最终把关。
+ * 写设置**不经过这里**：浏览器半区把本插件 entry Config 的表单绑定到 `webUiSettings`
+ * （namespace = profile entry id），由 host 的 `settings.update/mutate` 落盘。
  *
  * 信任栅栏与登录 cookie 由物理 `/api` 载体处理，插件不必自己鉴权。
  */
@@ -23,8 +23,8 @@ export interface RouteDeps {
   readonly readSettings: () => { dialect: 'pwsh' | 'bash'; bashPath: string }
   /** capability 视图。 */
   readonly capability: () => { supported: boolean; reason?: string | undefined; shellSandboxMode?: string | undefined }
-  /** `terminal-tool` namespace 是否登记成功。 */
-  readonly namespaceRegistered: () => boolean
+  /** 宿主设置服务是否可见（设置表单可写）。 */
+  readonly settingsAvailable: () => boolean
   /** 最近的替换报告。 */
   readonly lastReplace: () => { applied: boolean; at: number; reason?: string | undefined } | undefined
 }
@@ -111,7 +111,7 @@ export function registerRoutes(ctx: HostContextLike, deps: RouteDeps): void {
       const last = deps.lastReplace()
       return {
         platform: process.platform,
-        namespaceRegistered: deps.namespaceRegistered(),
+        settingsAvailable: deps.settingsAvailable(),
         dialect: settings.dialect,
         bashPath: settings.bashPath,
         capability: {

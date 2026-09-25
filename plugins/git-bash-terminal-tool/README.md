@@ -41,11 +41,32 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 - 路径栏只显示路径本身：候选来源（`Git for Windows` / `MSYS2` / …）与 `bash --version`
   这类扫描细节不再摊在设置页里 —— 多条路径时路径栏就是选择器。
 - 一个候选都没找到时，`Git Bash` 依然可选（只是还没有路径可用），点「自动发现」会给出一行「没有找到」说明。
-- 手动把一个不存在的路径写进 settings.yaml 会被 host 的 `validate` 拒绝；路径为空则是合法的中间态。
+- 路径栏可以手填，但**只有真实存在且不是 WSL 的 `bash.exe` 才会生效**：每次新会话替换前校验，
+  不合法就跳过替换（会话照旧 pwsh）并写一行诊断；路径为空是合法中间态。
 - 运行时如果这台机器/这个 DSH 版本不具备替换所需的扩展点，设置行会显示「当前版本不支持：<原因>」，
   会话**完全不受影响**（插件不抛错、不 veto，只写诊断日志）。
 
 ![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/git-bash-terminal-tool.png)
+
+## 升级到 0.2.0（DSH 0.1.7）
+
+DSH 0.1.7 换了设置模型（旧 `ctx.settings.register` 已不存在），本插件 0.2.0 随之上车：
+
+- 设置从「插件自造的 `terminal-tool` 命名空间」改成**插件 entry 自己的 Config**，
+  表单按 **profile entry id `git-bash-terminal-tool`** 定位；
+- 可编辑字段用 schemastery 的 `.volatile()` 声明，所以插件多了一个运行时依赖
+  `@deepseek-ai/schemastery`；
+- 持久化位置从 `$DSH_HOME/settings.yaml` 变成**当前 profile 的 patch**
+  （`profiles/<profile>/cordis.patch.yml`）里本插件那一行的 `config`。
+
+⚠️ **旧选择不会自动迁移**：0.1.7 的旧设置导入按「分区名 = entry id」执行，
+`settings.yaml` 里的 `terminal-tool:` 匹配不到 `git-bash-terminal-tool`，只会被跳过
+（原文件已改名为 `settings.yaml.imported`）。所以升级后请**重新选一次**：
+设置 → 通用 → 终端工具 → 点 **Git Bash** → 点 **自动发现** → 开一个新会话。
+
+本版按 DSH **0.1.7-rc.2** 的设置模型实现：host 侧是 volatile Config；浏览器侧优先用家族兼容层的
+`webUiSettings`，没有它就退回官方原生 `configForms.get(entryId)`（所以普通 0.1.7 部署也能用）。
+更旧的 DSH（0.1.5 那套 `ctx.settings.register` / `settingsScope`）请继续用 0.1.0。
 
 ## 极简模式（minimal）的影响
 
@@ -79,6 +100,10 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 ## 安装
 
 ```powershell
+# 从 npm（推荐；需要 DSH >= 0.1.7）
+npx @deepseek-ai/dsh plugin --profile web add dsh-tweaks-git-bash-terminal-tool
+
+# 或从本仓库源码（开发调试）
 npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\git-bash-terminal-tool"
 ```
 
@@ -101,10 +126,12 @@ npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugin
 - 工具目录与提示词：只在 agent 的内存 scope 里注册，随 agent 释放；
 - `ctx.shell`：从头到尾没接管过。
 
-唯一的残留是 `$DSH_HOME/settings.yaml` 里的 `terminal-tool:` 段 —— 它保存本插件唯一的持久化状态
-（`dialect` / `bashPath` / 上一次自动发现扫到的 `bashCandidates`）。`dsh plugin remove` 没有清理设置文档的钩子，
-插件也无法区分「重启」与「卸载」（两种情况插件都会被卸载一次，在 dispose 里删数据会让重启丢失你要保留的路径），
-所以这段是**惰性的**：卸载后没有任何代码会读它，手动删掉那几行即彻底消失。
+唯一的持久化状态是**当前 profile 的 patch**（`$DSH_HOME/profiles/<profile>/cordis.patch.yml`）里
+本插件那一行的 `config`（`dialect` / `bashPath` / 上一次自动发现扫到的 `bashCandidates`）。
+`dsh plugin remove` 没有清理它的钩子，插件也无法区分「重启」与「卸载」（两种情况插件都会被卸载一次，
+在 dispose 里删数据会让重启丢掉你要保留的路径），所以那一行是**惰性的**：卸载后没有任何代码会读它，
+手动删掉即可。旧版（0.1.0）写在 `$DSH_HOME/settings.yaml` 的 `terminal-tool:` 段不会被 0.1.7 导入
+（见「升级到 0.2.0」），它只留在 `settings.yaml.imported` 里，同样可以手动删。
 临时目录下的 `dsh-git-bash-terminal-tool.log` 同理。
 
 ## 已知限制
@@ -129,11 +156,12 @@ Get-Content "$env:TEMP\dsh-git-bash-terminal-tool.log" -Tail 30
 | 日志 | 含义 |
 |---|---|
 | `apply: platform=win32 pid=…` | 宿主半区被加载了 |
-| `settings: registered bash bashPath="…"` | 设置读到了 |
+| `settings: dialect=bash bashPath="…" candidates=N（新会话生效）` | 从 entry Config 读到的当前设置 |
 | `routes: registered /api/dsh-tweaks-terminal/state` | 浏览器取数的路由挂上了 |
 | `replace: applied agent=… bash=…` | 某个会话成功换成了 Git Bash |
 | `replace: skipped agent=… reason=…` | 跳过的原因（设置是 pwsh / bashPath 为空 / 找不到 `pwsh` 可限制 …） |
-| `settings: register failed: invalid bashPath: …` | 存盘里的 `bashPath` 不合法（不存在 / 是 WSL）→ 本次启动**只降级成 pwsh**，会话不受影响 |
+| `settings: current value is invalid: invalid bashPath: …` | 存盘里的 `bashPath` 不合法（不存在 / 是 WSL）→ 只留痕，不拦启动 |
+| `replace: skipped agent=… reason=invalid bashPath: …` | 该会话的替换被跳过（会话照旧 pwsh，绝不注册坏路径的工具） |
 | `replace: failed agent=… unsupported JSON schema: …` | 工具 schema 超出当前 DSH 的 JSON Schema 子集 → 只跳过替换并留痕 |
 | `replace: restrict(deny:[pwsh]) refused, skipping` | 该 agent 已看不到 `pwsh`（典型：子代理继承了父层的处理结果）→ 正常跳过 |
 
@@ -145,7 +173,7 @@ node node_modules/typescript/bin/tsc --noEmit
 node scripts/selftest.mjs        # 发现算法 / 设置 / 升级契约 / 替换 / 工具契约 + 真机跑 Git Bash
 node scripts/clientsmoke.mjs     # client bundle 协议 + apply + 行组件
 
-# 让自测用**真的** @deepseek-ai/dsh-tools 校验器复核工具 schema（推荐，CI 里可不设）
+# 让自测用**部署里的**真件复核：dsh-tools 的工具 schema 校验器 + dsh-settings 的 volatileForm（推荐，CI 里可不设）
 DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
 ```
 
@@ -154,13 +182,14 @@ DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
 
 实现要点（细节都在源码注释里）：
 
-- **零 `@deepseek-ai/*` 运行时依赖**：所有官方契约都是 `src/host/types.ts` 的结构性窄化投影，
-  工具定义与执行器都自带（因为 win32 上 `ctx.shell` 就是 pwsh，本插件不接管它）。
+- **运行时只依赖 `@deepseek-ai/schemastery`**（entry Config 必须是真 schema，见「升级到 0.2.0」）；
+  其余官方契约全部是 `src/host/types.ts` 的结构性窄化投影，工具定义与执行器都自带
+  （因为 win32 上 `ctx.shell` 就是 pwsh，本插件不接管它）。
 - 替换发生在 `agent/session-start`，动作只有三个：在**该 agent 自己的 scope** 里
   `tools.restrict({ deny: ['pwsh'] })`、`tools.register(<自包含 Git Bash 工具>)`、
   `systemPrompt.section({ name: 'tool:pwsh', order: 1010, text: '' })` 压掉残留提示词。
 - 沙箱升级（`sandbox_permissions` + 审批）按官方契约**逐字**复刻（`src/host/escalation.ts`），
   包括错误文案、严格更宽顺序与 fail-closed 语义。
-- 包名/目录已改名为 `dsh-tweaks-git-bash-terminal-tool`（体现 Git Bash），但**内部的 settings namespace、
-  locale 命名空间与设置行 slot id 仍叫 `terminal-tool`**：前者是已经落盘的用户数据
-  （改名等于清空用户选过的工具与路径），后两者是纯实现标识。
+- 包名/目录已改名为 `dsh-tweaks-git-bash-terminal-tool`（体现 Git Bash）。**设置 namespace 现在是
+  entry id `git-bash-terminal-tool`**（0.1.7 的设置面按 entry id 定位，见「升级到 0.2.0」）；
+  locale 命名空间与设置行 slot id 仍叫 `terminal-tool`（纯实现标识，不参与设置寻址）。

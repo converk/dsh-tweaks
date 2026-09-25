@@ -45,7 +45,7 @@ function useStoreState(controller: RowController): RowState {
 
 /**
  * 渲染「终端工具」首选项行。
- * @param props - 文案与 settingsScope（由 `apply` 注入）。
+ * @param props - 文案与设置表单 scope（由 `apply` 注入）。
  * @returns 行元素树；非 Windows 或未加载完成时为 null。
  */
 export function TerminalToolRow({ t, scope }: TerminalToolRowProps): JSX.Element | null {
@@ -144,7 +144,7 @@ export function TerminalToolRow({ t, scope }: TerminalToolRowProps): JSX.Element
       {!state.supported && state.unsupportedReason !== undefined ? (
         <div className="tterm-note">{t('row.notSupported', { reason: state.unsupportedReason })}</div>
       ) : null}
-      {!state.namespaceRegistered ? <div className="tterm-note">{t('row.unavailable')}</div> : null}
+      {!state.settingsAvailable ? <div className="tterm-note">{t('row.unavailable')}</div> : null}
       {state.notice !== undefined ? <div className="tterm-note">{state.notice}</div> : null}
       {state.error !== undefined ? <div className="tterm-error">{state.error}</div> : null}
       <div className="tterm-note">{t('row.newSession')}</div>

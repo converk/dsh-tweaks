@@ -3,12 +3,15 @@
  *
  * 与 host/types.ts 同样的纪律（AGENTS.md §2.8）：client bundle 只允许 `require`
  * 页面种子模块（`react` / `react/jsx-runtime`），所以这里不 import 任何
- * `@deepseek-ai/*` 类型包，只按真实契约的形状窄化。字段形状以本机 DSH 0.1.5-rc.1
- * 部署的 `lib/types/client/**` 为准：
+ * `@deepseek-ai/*` 类型包，只按真实契约的形状窄化。字段形状以本机 DSH
+ * 0.1.5-rc.1 / 0.1.7-rc.2 部署的 `lib/types/client/**` 为准：
  *
  * - `slots.inject/register`：`dsh-client-ui-slots/lib/types/client/index.d.ts`
  * - `settings.general.item` 的 owner props 为空：`dsh-client-ui-settings/lib/types/client/contract/slots.d.ts`
- * - `settingsScope.bind`：`dsh-client-ui-settings/lib/types/client/settings-scope.d.ts`
+ * - 设置通道 `bind`：0.1.5 由官方 `dsh-client-ui-settings` 的 `settingsScope` 提供；
+ *   0.1.7 起官方客户端**不再提供**该服务，改由家族兼容层
+ *   `@linxin666/dsh-client-ui-web-ui-settings` 的 `webUiSettings` 提供。0.1.7 起
+ *   namespace 必须是 **profile entry id**（原生表单按 entry id 定位）。
  * - `locale.register/bind`：`dsh-client-locale/lib/types/client/*.d.ts`
  */
 
@@ -56,34 +59,58 @@ export interface SettingsScopeSnapshotLike<T> {
 export interface SettingsScopeLike<T> {
   getSnapshot(): SettingsScopeSnapshotLike<T>
   subscribe(listener: () => void): () => void
+  /**
+   * 提交一批字段编辑。
+   *
+   * ⚠️ 返回值随宿主版本不同：0.1.7 的原生表单 resolve `false` 表示**宿主拒绝了**
+   * 这次写入（revision 冲突 / 字段非 volatile），旧 `settingsScope` 只 resolve
+   * `undefined`。所以类型是 `unknown`，调用方显式判 `false`（见 `store.ts`）。
+   */
   mutate(
     ops: readonly { op: 'set' | 'unset'; path: readonly string[]; value?: unknown }[],
     expectedRevision?: number,
-  ): Promise<void>
-  set(field: string, value: unknown): Promise<void>
-  unset(field: string): Promise<void>
+  ): Promise<unknown>
+  set(field: string, value: unknown): Promise<unknown>
+  unset(field: string): Promise<unknown>
 }
 
 /**
  * 一个 namespace 的绑定规格（`SettingsScopeSpec` 的窄化）。
  *
- * `decode` 缺省时，客户端会用 **namespace 自己的 wire schema** 校验 section；
- * 这里显式给一个 decoder：读值不再依赖那份手写 schema 的正确性（wire schema 只服务
- * 配置表单）。schema 一旦漂了，缺省路径会让快照永远卡在 `loading` ——
- * 表现就是「设置行两个选项全都点不动、却看不出任何报错」。
+ * `decode` 缺省时，客户端会用 entry Config 的 wire schema 校验 section；
+ * 这里显式给一个 decoder：读值只依赖 host 真正存了什么，不受表单 schema 投影影响。
  */
 export interface SettingsScopeSpecLike<T> {
   readonly namespace: string
   readonly decode?: (section: unknown) => T | undefined
 }
 
-/** `settingsScope` 服务的最小面。 */
+/**
+ * 官方 0.1.7 原生设置表单服务（`dsh-client-ui-settings` 的 `configForms`）。
+ *
+ * `get(entryId)` 返回的 `ConfigForm` 与本文件的 `SettingsScopeLike` 同形
+ * （快照 / 订阅 / `mutate` / `set` / `unset`），所以两者可以互换使用：
+ * 没有家族兼容层 `webUiSettings` 的普通 0.1.7 部署直接走这条路。
+ */
+export interface ConfigFormsLike {
+  /** 取一个 profile entry 的表单；entry 尚未被服务时可能抛错（调用方判空/兜底）。 */
+  get<T>(entryId: string): SettingsScopeLike<T>
+}
+
+/**
+ * 设置通道 binder 的最小面。
+ *
+ * 服务名随宿主版本变化（见文件头）：0.1.7 起是 `webUiSettings`，0.1.5 是
+ * `settingsScope`；两者都满足本接口。
+ */
 export interface SettingsScopeBinderLike {
   bind<T>(spec: SettingsScopeSpecLike<T>): SettingsScopeLike<T>
 }
 
-/** cordis 客户端上下文的最小面（本插件只用到 `get` / `effect`）。 */
+/** cordis 客户端上下文的最小面（本插件只用到 `get` / `effect` / `inject`）。 */
 export interface PluginClientContextLike {
   get(name: string): unknown
   effect?(callback: () => (() => void) | void, label?: string): unknown
+  /** 注册一个等服务就位后再跑的子插件（`ctx.plugin({ inject, apply })` 的简写）。 */
+  inject?(services: readonly string[], callback: () => void): unknown
 }
