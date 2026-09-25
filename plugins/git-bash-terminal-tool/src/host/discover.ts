@@ -79,10 +79,18 @@ const KNOWN_MSYS2_ROOTS: readonly string[] = ['C:\\msys64', 'C:\\msys32', 'D:\\m
 /** 常见的 Cygwin 根目录。 */
 const KNOWN_CYGWIN_ROOTS: readonly string[] = ['C:\\cygwin64', 'C:\\cygwin', 'D:\\cygwin64']
 
-/** 包装成 Windows 长路径前缀，避免超长路径上的 `lstat` 失败。 */
+/**
+ * 包装成 Windows 长路径前缀，避免超长路径上的 `lstat` 失败。
+ *
+ * ⚠️ 扩展长度路径前缀是 Windows 专有的：在非 Windows 上必须原样返回，否则 `lstat`
+ * 会把这个字面量路径当成不存在的文件（本插件的纯逻辑自测在 Linux CI 上跑，踩过这个坑）。
+ * @param path - 待包装的路径。
+ * @returns 可交给 `lstat` 的路径。
+ */
 function toExtendedPath(path: string): string {
-  if (path.startsWith('\\\\?\\')) return path
   const absolute = resolve(path)
+  if (process.platform !== 'win32') return absolute
+  if (path.startsWith('\\\\?\\')) return path
   if (absolute.startsWith('\\\\')) return `\\\\?\\UNC\\${absolute.slice(2)}`
   return `\\\\?\\${absolute}`
 }

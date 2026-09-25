@@ -1,0 +1,123 @@
+# 用 npm trusted publishing（GitHub OIDC）发布本仓库的插件包，不需要任何 NPM_TOKEN。
+#
+# 一次性配置（每个要发布的包各配一次，npm 是按包授权的）：
+#   npmjs.com → 打开包 → Settings → Trusted publishing → Add a trusted publisher
+#     Provider:        GitHub Actions
+#     Repository:      converk/dsh-tweaks
+#     Workflow name:   publish.yml        （必须与本文件名逐字一致）
+#     Environment:     留空（本 workflow 没有用 environment）
+#     Allowed actions: npm publish
+#   配好后再删掉 npmjs 上的旧 access token 即可。
+#
+# 触发方式：
+#   1) 推一个 <插件目录名>/v<版本> 的 tag（版本必须与 package.json 一致）：
+#        git tag git-bash-terminal-tool/v0.2.0 && git push origin git-bash-terminal-tool/v0.2.0
+#   2) 或在 Actions 页面手动 workflow_dispatch（可选 dry_run，只打包不发布）。
+#
+# 前提：npm CLI >= 11.5.1、Node >= 22.14.0（下面都装了），且仓库是 public（provenance 需要）。
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: 要发布的插件目录（plugins/ 下）
+        required: true
+        type: choice
+        options:
+          - git-bash-terminal-tool
+          - prompt-history
+          - model-capabilities
+          - turn-file-revert
+      dry_run:
+        description: 只跑 npm publish --dry-run（不真正发布）
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - '*/v*'
+
+permissions:
+  contents: read
+  id-token: write # trusted publishing / provenance 都要它
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析插件与版本
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            plugin="${{ inputs.plugin }}"
+            dry="${{ inputs.dry_run }}"
+          else
+            plugin="${GITHUB_REF_NAME%%/v*}"
+            dry="false"
+          fi
+          case "$plugin" in
+            git-bash-terminal-tool|prompt-history|model-capabilities|turn-file-revert) ;;
+            *) echo "::error::未知插件 '$plugin'"; exit 1 ;;
+          esac
+          test -f "plugins/$plugin/package.json" || { echo "::error::找不到 plugins/$plugin/package.json"; exit 1; }
+          version="$(node -p "require('./plugins/$plugin/package.json').version")"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag_version="${GITHUB_REF_NAME##*/v}"
+            if [ "$tag_version" != "$version" ]; then
+              echo "::error::tag 版本 '$tag_version' 与 package.json 的 '$version' 不一致"; exit 1
+            fi
+          fi
+          {
+            echo "plugin=$plugin"
+            echo "version=$version"
+            echo "dry_run=$dry"
+          } >> "$GITHUB_OUTPUT"
+          echo "target: plugins/$plugin@$version (dry_run=$dry)"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # trusted publishing 要求 npm CLI >= 11.5.1；setup-node 自带的通常是 10.x。
+      - name: 升级 npm（trusted publishing 需要 >= 11.5.1）
+        run: npm install -g npm@^11.5.1 && npm --version
+
+      - name: 安装插件依赖
+        working-directory: plugins/${{ steps.target.outputs.plugin }}
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: 类型检查 + 构建 + 自测
+        working-directory: plugins/${{ steps.target.outputs.plugin }}
+        run: |
+          node node_modules/typescript/bin/tsc --noEmit
+          node build.mjs
+          if [ -f scripts/selftest.mjs ]; then node scripts/selftest.mjs; fi
+          if [ -f scripts/clientsmoke.mjs ]; then node scripts/clientsmoke.mjs; fi
+
+      # 注意：这里不设置 NODE_AUTH_TOKEN —— npm 会拿 Actions 的 OIDC token
+      # 去换一次性发布凭证（trusted publishing），并附带 provenance 证明。
+      - name: 发布到 npm
+        working-directory: plugins/${{ steps.target.outputs.plugin }}
+        run: |
+          if [ "${{ steps.target.outputs.dry_run }}" = "true" ]; then
+            npm publish --dry-run
+          else
+            npm publish --provenance --access public
+          fi
+
+      - name: 结果
+        run: echo "已发布 plugins/${{ steps.target.outputs.plugin }}@${{ steps.target.outputs.version }}"

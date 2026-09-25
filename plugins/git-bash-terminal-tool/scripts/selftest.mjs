@@ -537,6 +537,12 @@ section('替换：能力探测')
   check('探测到 systemPrompt', capability.promptLike)
 }
 
+// ⚠️ replaceTerminalTool 的第一个判定就是 process.platform，非 win32 一律跳过 ——
+// 这些行为断言只在 Windows 上跑（插件本身也只在 win32 挂载）。
+if (process.platform !== 'win32') {
+  section('替换：Windows-only 行为')
+  console.log('  skip 非 win32：replaceTerminalTool 的首个判定是平台')
+} else {
 section('替换：成功路径的四个动作')
 {
   const services = { subprocess: { spawn() {} } }
@@ -585,6 +591,7 @@ section('替换：跳过分支')
     bashPath: GIT_BASH,
   })
   check('缺 ctx.subprocess 时跳过', missing.applied === false && missing.reason.includes('subprocess'), missing.reason)
+}
 }
 
 // ---------------------------------------------------------------------------
