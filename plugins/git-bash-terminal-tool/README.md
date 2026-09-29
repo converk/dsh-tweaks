@@ -62,6 +62,7 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 |---|---|
 | 0.3.0 | 安装排障文档 + 版本号（首次发布） |
 | 0.3.1 | 与 0.3.0 内容相同，只把删 junction 的命令从 `Remove-Item -Recurse` 换成 `cmd /c rmdir`：旧版 Windows PowerShell（5.1）对 junction 用前者会连**链接目标**的内容一起删掉 |
+| 0.3.2 | 与 0.3.1 内容相同，只是改由仓库 CI（npm trusted publishing）发布，带 provenance，并在干净 Ubuntu 上复跑 tsc / build / selftest / clientsmoke |
 
 本版顺带用部署里的真件复核过 DSH **0.2.0-rc.1**：`node scripts/selftest.mjs`（146 项，含
 `@deepseek-ai/dsh-tools` 的工具 schema 校验器与 `@deepseek-ai/dsh-settings` 的 `volatileForm`）与
