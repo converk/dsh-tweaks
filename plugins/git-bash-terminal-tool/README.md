@@ -48,6 +48,21 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 
 ![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/git-bash-terminal-tool.png)
 
+## 升级到 0.3.0（安装问题修复）
+
+0.3.0 **没有改运行期行为**：host / client 半区的代码与 0.2.1 相同 —— 工具替换、设置面、沙箱升级、
+`minimal` 的取舍都不变。这一版修的是**装不上**：
+
+- README 补上「本地 link 留下的 junction 会让后续 npm / 市场安装报 `ERR_PNPM_EPERM`」的判据与清理步骤
+  （见「安装 → 装不上？…」），以及开发调试章节里「换回正式版前先清掉 junction」的提醒；
+- 只在文档与版本号上有变化，所以老机器上的持久化设置原样保留
+  （选择仍存在 profile patch 的 `git-bash-terminal-tool` 行 config 里）。
+
+本版顺带用部署里的真件复核过 DSH **0.2.0-rc.1**：`node scripts/selftest.mjs`（146 项，含
+`@deepseek-ai/dsh-tools` 的工具 schema 校验器与 `@deepseek-ai/dsh-settings` 的 `volatileForm`）与
+`node scripts/clientsmoke.mjs`（50 项）全绿 —— `tools.restrict` / `tools.register` / `systemPrompt.section` /
+entry Config 这几个契约在 0.2.x 上没有变化。
+
 ## 升级到 0.2.0（DSH 0.1.7）
 
 DSH 0.1.7 换了设置模型（旧 `ctx.settings.register` 已不存在），本插件 0.2.0 随之上车：
@@ -116,6 +131,42 @@ npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugin
 > 宿主半区的 `apply` 不会被调用（client bundle 会进启动图）。
 > `web` 为 DSH 的 profile 名称，可在 `C:\Users\你的用户名\.dsh\profiles\` 下确认。
 
+### 装不上？先看是不是「本地 link 留下的 junction」
+
+如果这台机器**之前用本地路径装过**本插件（上面那条开发调试命令），profile 的 `node_modules` 里会留下一个
+指向本仓库的 **junction**：
+
+```text
+<profile>\node_modules\dsh-tweaks-git-bash-terminal-tool  ->  D:\...\dsh-tweaks\plugins\git-bash-terminal-tool
+```
+
+之后再用市场 / npm 装**正式版**时，`pnpm add` 会把它当成本地包重新导入，并在导入后的目录里重建依赖链接；
+Windows 上创建真实符号链接需要管理员权限或开发者模式，于是整条命令失败（2026-09 实测：pnpm 11.22 / Node 24 /
+非管理员，pnpm 与 dsh 市场都会以同样的形式挂掉）：
+
+```text
+[ERR_PNPM_EPERM] [importPackage <profile>\node_modules\dsh-tweaks-git-bash-terminal-tool]
+EPERM: operation not permitted, symlink 'D:\...\plugins\git-bash-terminal-tool\node_modules\...\@deepseek-ai\schemastery'
+```
+
+**先删掉那个 junction，再装正式版**。它只是一个指向开发目录的链接，删掉不会动仓库里的任何文件：
+
+```powershell
+$profile = "$env:USERPROFILE\.dsh\profiles\web"   # 换成你自己的 profile 目录
+cmd /c rmdir "$profile\node_modules\dsh-tweaks-git-bash-terminal-tool"
+```
+
+> 用 `rmdir`（不带 `/s`）而不是 `Remove-Item -Recurse`：前者只摘掉链接本身，后者在旧版
+> Windows PowerShell 上会把链接**指向的目录内容**一起删掉。
+
+判据：`Get-Item "$profile\node_modules\dsh-tweaks-git-bash-terminal-tool"` 的 `LinkType` 显示
+`Junction` / `SymbolicLink` 就要删；为空（真实目录）说明是正常安装，不要动。
+
+> 这不是包内容的问题：把同一个包 `npm pack` 后在干净工程里 `pnpm add`、或用市场装到没有历史 link 的
+> profile 里都正常。只有「同一个包里既有本地 link、又要换成 registry 版本」时才会踩到。
+> 想少踩：开发调试改用 tarball（`npm pack` 后 `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.3.0.tgz`），
+> 它不会留下 junction。
+
 ## 卸载
 
 从 profile 的 `dsh.profile.bundles` 里移除、重启 DSH 即恢复原状：
@@ -165,6 +216,9 @@ Get-Content "$env:TEMP\dsh-git-bash-terminal-tool.log" -Tail 30
 | `replace: failed agent=… unsupported JSON schema: …` | 工具 schema 超出当前 DSH 的 JSON Schema 子集 → 只跳过替换并留痕 |
 | `replace: restrict(deny:[pwsh]) refused, skipping` | 该 agent 已看不到 `pwsh`（典型：子代理继承了父层的处理结果）→ 正常跳过 |
 
+安装阶段就失败的（pnpm / 市场报 `ERR_PNPM_EPERM ... symlink`）与本插件的日志无关：
+见「[安装 → 装不上？先看是不是「本地 link 留下的 junction」](#装不上先看是不是本地-link-留下的-junction)」。
+
 ## 开发者
 
 ```powershell
@@ -176,6 +230,10 @@ node scripts/clientsmoke.mjs     # client bundle 协议 + apply + 行组件
 # 让自测用**部署里的**真件复核：dsh-tools 的工具 schema 校验器 + dsh-settings 的 volatileForm（推荐，CI 里可不设）
 DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
 ```
+
+拿**本地目录**调试（`dsh plugin add <本目录>`）会在 profile 里建一个 junction；**换回 npm 正式版之前先把它删掉**，
+否则 `pnpm add` 会以 `ERR_PNPM_EPERM` 失败（原因与判据见「安装 → 装不上？…」）。不想反复删就用 tarball 调试：
+`npm pack` → `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.3.0.tgz`。
 
 设计文档见 [`docs/plans/git-bash-terminal-tool-design.md`](../../docs/plans/git-bash-terminal-tool-design.md)（本地文档，不入库），
 本仓库的开发约定、DSH 契约与通用坑见 [AGENTS.md](../../AGENTS.md)。

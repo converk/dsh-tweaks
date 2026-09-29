@@ -21,7 +21,7 @@ turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-
 | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-turn-file-revert.yml` | `data/plugins/converk__dsh-tweaks--plugins-turn-file-revert.yml` |
-| `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml` | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`（已合并；npm 现为 0.2.0） |
+| `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml` | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`（已合并；npm 现为 0.3.0） |
 
 一个 PR **最多 3 条**：前三个正好占满一个 PR，`git-bash-terminal-tool` 必须**另开一个独立 PR**（规范也建议"只提你愿意留下的那几个"）。
 
@@ -32,7 +32,7 @@ turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-
 | 每个 `package.json` 声明 `dsh.bundle` + 仓库根有 `cordis.patch.yml` | ✅ 三个都有 |
 | 仓库有真实可用代码 | ✅ |
 | 三个包声明 `files` / `repository` / `engines`，且不是 `private` | ✅ |
-| npm 包已发布 | ✅ 四个包均已上线（`dsh-tweaks-prompt-history` / `-model-capabilities` / `-turn-file-revert` 为 0.1.0；`-git-bash-terminal-tool` 为 0.2.0，需 DSH ≥ 0.1.7） |
+| npm 包已发布 | ✅ 四个包均已上线（`dsh-tweaks-prompt-history` / `-model-capabilities` / `-turn-file-revert` 为 0.1.0；`-git-bash-terminal-tool` 为 0.3.0，需 DSH ≥ 0.1.7） |
 | 仓库加 `dsh-plugin` topic | ⬜ **待做**（GitHub 仓库页 → About 齿轮 → Topics） |
 | 仓库创建满 1 天 | ⏳ 首个提交是 2026-09-10 18:34，**2026-09-11 18:34 之后**提 PR 才会过 CI |
 | 描述与代码相符、无营销词 | ✅ 已按代码核对（描述里的能力/适配器都对得上） |
@@ -59,7 +59,7 @@ git push -u origin add-converk-dsh-tweaks
 
 ## 4. 发布 npm 包（预构建路线）
 
-**当前状态：四个包均已发布上线**（git-bash-terminal-tool 为 0.2.0，其余为 0.1.0），本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
+**当前状态：四个包均已发布上线**（git-bash-terminal-tool 为 0.3.0，其余为 0.1.0），本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
 
 以后发新版时，四个包已经配置好 `prepack: npm run build`，**不用手动先构建**：
 
