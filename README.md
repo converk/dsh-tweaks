@@ -2,13 +2,7 @@
 
 给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
 
-> **四个插件都已迁移到 DSH 0.2.0**，并在 `0.2.0-rc.1` 上复核通过：`git-bash-terminal-tool` 146 项自测 +
-> 50 项 client 冒烟、`turn-file-revert` 72 + 33、`model-capabilities` 25 项自测全绿
-> （`prompt-history` 是纯 UI 插件，仓库里没有自测脚本，只跑构建 + 类型检查；它用到的
-> `conversation.input.overlay` 席位与 `inputActions.setDraft` 在 0.2.0 的契约里都还在）。
->
-> 版本下限：`git-bash-terminal-tool` 0.2.0 起改用 DSH 0.1.7 的新设置模型，需要 DSH ≥ 0.1.7；
-> 其余三个插件在 0.1.5 起即可用。`turn-file-revert` 已弃用（功能已由官方提供，见目录与对应小节）。
+> 适配 DSH **0.2.0**；`git-bash-terminal-tool` 需要 DSH ≥ 0.1.7。
 
 ---
 
