@@ -2,8 +2,13 @@
 
 给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
 
-> 适配 DSH **0.1.7-rc.2**。其中 `git-bash-terminal-tool` 0.2.0 起用了 0.1.7 的新设置模型，
-> 需要 DSH ≥ 0.1.7；其余三个插件在 0.1.5 起即可用。
+> **四个插件都已迁移到 DSH 0.2.0**，并在 `0.2.0-rc.1` 上复核通过：`git-bash-terminal-tool` 146 项自测 +
+> 50 项 client 冒烟、`turn-file-revert` 72 + 33、`model-capabilities` 25 项自测全绿
+> （`prompt-history` 是纯 UI 插件，仓库里没有自测脚本，只跑构建 + 类型检查；它用到的
+> `conversation.input.overlay` 席位与 `inputActions.setDraft` 在 0.2.0 的契约里都还在）。
+>
+> 版本下限：`git-bash-terminal-tool` 0.2.0 起改用 DSH 0.1.7 的新设置模型，需要 DSH ≥ 0.1.7；
+> 其余三个插件在 0.1.5 起即可用。`turn-file-revert` 已弃用（功能已由官方提供，见目录与对应小节）。
 
 ---
 
@@ -11,7 +16,8 @@
 
 - [prompt-history —— 输入框里的历史提示词](#prompt-history--输入框里的历史提示词)
 - [model-capabilities —— 给模型行补上「思考强度 / 多模态 / 容量」](#model-capabilities--给模型行补上思考强度--多模态--容量)
-- [turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)
+- ~~[turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)~~
+  —— **已弃用**：功能已由官方提供（DSH 0.2.x 自带的回合改动卡片 + 逐文件 diff 复核），本插件不再维护
 - [git-bash-terminal-tool —— 可将 Windows 环境下的终端工具替换为 Git Bash](#git-bash-terminal-tool--可将-windows-环境下的终端工具替换为-git-bash)
 - [安装](#安装)
 
@@ -66,6 +72,10 @@
 ---
 
 ## turn-file-revert —— 本轮改动统计 + 一键撤回
+
+> **⚠️ 已弃用：功能已由官方提供。** DSH 0.2.x 自带「已编辑 N 个文件」的回合改动卡片，以及逐文件
+> diff 复核（`@deepseek-ai/dsh-workspace-changes` + `@deepseek-ai/dsh-client-ui-deliverables`），
+> 不再需要插件补一行。下面的说明只供已安装的老用户参考，本插件不再维护。
 
 **它能做什么**
 
