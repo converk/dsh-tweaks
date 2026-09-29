@@ -48,15 +48,20 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 
 ![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/git-bash-terminal-tool.png)
 
-## 升级到 0.3.0（安装问题修复）
+## 升级到 0.3.x（安装问题修复）
 
-0.3.0 **没有改运行期行为**：host / client 半区的代码与 0.2.1 相同 —— 工具替换、设置面、沙箱升级、
+0.3.x **没有改运行期行为**：host / client 半区的代码与 0.2.1 相同 —— 工具替换、设置面、沙箱升级、
 `minimal` 的取舍都不变。这一版修的是**装不上**：
 
 - README 补上「本地 link 留下的 junction 会让后续 npm / 市场安装报 `ERR_PNPM_EPERM`」的判据与清理步骤
   （见「安装 → 装不上？…」），以及开发调试章节里「换回正式版前先清掉 junction」的提醒；
 - 只在文档与版本号上有变化，所以老机器上的持久化设置原样保留
   （选择仍存在 profile patch 的 `git-bash-terminal-tool` 行 config 里）。
+
+| 版本 | 内容 |
+|---|---|
+| 0.3.0 | 安装排障文档 + 版本号（首次发布） |
+| 0.3.1 | 与 0.3.0 内容相同，只把删 junction 的命令从 `Remove-Item -Recurse` 换成 `cmd /c rmdir`：旧版 Windows PowerShell（5.1）对 junction 用前者会连**链接目标**的内容一起删掉 |
 
 本版顺带用部署里的真件复核过 DSH **0.2.0-rc.1**：`node scripts/selftest.mjs`（146 项，含
 `@deepseek-ai/dsh-tools` 的工具 schema 校验器与 `@deepseek-ai/dsh-settings` 的 `volatileForm`）与
