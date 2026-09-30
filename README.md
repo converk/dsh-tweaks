@@ -11,7 +11,8 @@
 - [prompt-history —— 输入框里的历史提示词](#prompt-history--输入框里的历史提示词)
 - [model-capabilities —— 给模型行补上「思考强度 / 多模态 / 容量」](#model-capabilities--给模型行补上思考强度--多模态--容量)
 - ~~[turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)~~
-  —— **已弃用**：功能已由官方提供（DSH 0.2.x 自带的回合改动卡片 + 逐文件 diff 复核），本插件不再维护
+  —— **已弃用并停止维护**：功能已由官方提供（DSH 0.2.x 自带的回合改动卡片 + 逐文件 diff 复核）；
+  最后一个支持版本 **0.2.0-rc.2**，之后的版本更迭与检查忽略本插件
 - [git-bash-terminal-tool —— 可将 Windows 环境下的终端工具替换为 Git Bash](#git-bash-terminal-tool--可将-windows-环境下的终端工具替换为-git-bash)
 - [安装](#安装)
 
@@ -67,9 +68,10 @@
 
 ## turn-file-revert —— 本轮改动统计 + 一键撤回
 
-> **⚠️ 已弃用：功能已由官方提供。** DSH 0.2.x 自带「已编辑 N 个文件」的回合改动卡片，以及逐文件
-> diff 复核（`@deepseek-ai/dsh-workspace-changes` + `@deepseek-ai/dsh-client-ui-deliverables`），
-> 不再需要插件补一行。下面的说明只供已安装的老用户参考，本插件不再维护。
+> **⚠️ 已弃用：功能已由官方提供，本插件停止维护。** DSH 0.2.x 自带「已编辑 N 个文件」的回合改动卡片，
+> 以及逐文件 diff 复核（`@deepseek-ai/dsh-workspace-changes` + `@deepseek-ai/dsh-client-ui-deliverables`），
+> 不再需要插件补一行。下面的说明只供已安装的老用户参考。
+> **最后一个支持的 DSH 版本是 0.2.0-rc.2**；此后的版本更迭、契约审计与 CI/发布一律忽略本插件（见 [AGENTS.md §0](./AGENTS.md)）。
 
 **它能做什么**
 
@@ -132,6 +134,15 @@ Windows 上 DSH 默认让模型用 PowerShell（工具名 `pwsh`）执行命令�
 > 不用 WSL 的 `bash`：`System32` 与 `WindowsApps` 下的 `bash.exe` 会被硬排除。
 > 只有**极简模式（minimal）**受影响：它原本是持久 shell，会被换成一次性 Git Bash（PTY 后端在 Windows 上走不通）。
 > 其他三个官方预设（standard / ptc / cordis）本来就是一次性 shell，不受影响。
+>
+> ⚠️ **请用 0.3.3 或更高**：0.2.0 ~ 0.3.2 的替换逻辑在 DSH 0.1.6 之后**根本没生效**
+> （官方把 per-agent 初始化事件从 `agent/session-start` 换成了 `agent/created`，
+> 并把 `ctx.sandbox.confine` 从同步改成 async —— 两处都是静默失败，见 issue #1）。
+> 0.3.3 修掉了这两处；最低支持版本为 DSH **0.1.7**。
+>
+> ⚠️ **受限模式下 Git Bash 起不来（与插件无关）**：DSH 的 Windows 沙箱用写受限令牌，
+> 而 MSYS2/Git Bash 启动必须创建信号管道（`couldn't create signal pipe, Win32 error 5`）；
+> 官方 `pwsh` 工具跑 `bash.exe` 同样失败。**会话沙箱需要是 `danger-full-access`**。
 >
 > ⚠️ 从 **0.1.0 升级到 0.2.0**（随 DSH 0.1.7 的设置模型迁移）后要**重新选一次**方言/路径：
 > 旧 `settings.yaml` 里的 `terminal-tool:` 段不会被自动迁移（设置现在存在 profile patch 里）。
