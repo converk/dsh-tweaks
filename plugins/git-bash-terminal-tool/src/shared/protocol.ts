@@ -63,7 +63,7 @@ export interface StateView {
   /** host 读到的当前设置值（客户端以 settingsScope 为准，这里用于首次渲染的兜底）。 */
   readonly dialect: Dialect
   readonly bashPath: string
-  /** host 侧能力探测：`agent/session-start` 的替换链路是否具备必要条件。 */
+  /** host 侧能力探测：`agent/created` 的替换链路是否具备必要条件。 */
   readonly capability: CapabilityView
   /** 最近的替换尝试报告（有会话跑过才有）。 */
   readonly lastReplace?: ReplaceReport

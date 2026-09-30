@@ -8,6 +8,8 @@ dist/
 # 日志与临时文件
 *.log
 tmp/
+# compatcheck --fetch 拉下来的官方产物缓存（package 自己的目录里）
+.compat-cache/
 
 # Python / conda（辅助脚本）
 __pycache__/

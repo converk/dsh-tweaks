@@ -1,7 +1,7 @@
 {
   "name": "dsh-tweaks-git-bash-terminal-tool",
   "description": "可将 Windows 环境下的终端工具替换为 Git Bash",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -47,7 +47,8 @@
     "watch": "node build.mjs --watch",
     "check": "tsc --noEmit",
     "selftest": "node scripts/selftest.mjs",
-    "smoke": "node scripts/clientsmoke.mjs"
+    "smoke": "node scripts/clientsmoke.mjs",
+    "compat": "node scripts/compatcheck.mjs"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "~3.18.4"

@@ -48,10 +48,50 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 
 ![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/git-bash-terminal-tool.png)
 
+## 升级到 0.3.3（修复：在 DSH 0.1.6+ 上替换根本没生效）
+
+0.2.0 ~ 0.3.2 的**替换逻辑在 DSH 0.1.6 之后是死的**（issue #1）：
+设置照常保存、日志照常写、设置行状态正常，但模型**始终只看到 `pwsh`，`bash` 从不出现**。
+两个互相独立的原因，都是本插件当年按 DSH **0.1.5-rc.1** 写的契约，而它们在 0.1.6 一起变了：
+
+| 契约 | 0.1.5-rc.1（写码时的部署） | 0.1.6 起（0.1.7 / 0.2.0 都是） | 表现 |
+|---|---|---|---|
+| per-agent 初始化事件 | `agent/session-start` | **`agent/created`** | 监听器**永不触发**：不隐藏 pwsh、不注册 bash、提示词也不替换；日志里连一条 `replace:` 都没有 |
+| `ctx.sandbox.confine` | 同步返回 `ConfinedArgv` | **async，返回 `Promise`** | 受限（read-only / workspace-write）模式下每次 `bash` 调用都失败：`Error: undefined is not iterable` |
+
+0.3.3 改的就是这两处（事件名抽成常量 `AGENT_INIT_EVENT`；`confineArgv` 改成 async 并在
+`jobs.start` 之前 await），并补了两道防线：
+
+- `scripts/selftest.mjs` 现在**走公开入口 `apply()`** 断言「订阅的事件名」与「收到事件后的四个动作」，
+  事件名再写错会立刻红；
+- 新增 `scripts/compatcheck.mjs`：拿官方产物逐条核对本插件依赖的每个契约，
+  支持 `node scripts/compatcheck.mjs --fetch 0.1.7-rc.2 0.2.0-rc.2`。
+
+这两个契约写错的表现都是**静默失效**（cordis 不会因为事件名不存在而报错；没 await 也只是拿到
+一个 Promise），所以别把它们改回去。
+
+### 已知限制：受限模式下 Git Bash 起不来（与插件无关）
+
+DSH 在 Windows 上用「写受限令牌」实现文件沙箱（`dsh-sandbox-windows-acl`），而
+MSYS2 / Git for Windows 的 `bash.exe` 启动时必须创建信号管道（`\\.\pipe\\`）——
+写受限令牌下这一步会被拒：
+
+```text
+bash.exe: *** fatal error - couldn't create signal pipe, Win32 error 5
+```
+
+**这不是本插件的 bug**：在同一个 `workspace-write` 会话里，用官方 `pwsh` 工具跑
+`& "C:\Program Files\Git\bin\bash.exe" -c "echo x"` 会得到**逐字相同**的报错。
+实测同一个会话切到 `danger-full-access` 之后，本插件的 `bash` 工具正常返回 stdout。
+
+所以要让 Git Bash 真正跑起来，会话沙箱必须是 **`danger-full-access`**
+（启动时 `DSH_PERMISSION_MODE=danger-full-access`，或在界面上切到完全权限）。
+本插件不会绕过 DSH 的沙箱策略。
+
 ## 升级到 0.3.x（安装问题修复）
 
-0.3.x **没有改运行期行为**：host / client 半区的代码与 0.2.1 相同 —— 工具替换、设置面、沙箱升级、
-`minimal` 的取舍都不变。这一版修的是**装不上**：
+0.3.0 ~ 0.3.2 **没有改运行期行为**：host / client 半区的代码与 0.2.1 相同 —— 工具替换、设置面、沙箱升级、
+`minimal` 的取舍都不变。这几版修的是**装不上**：
 
 - README 补上「本地 link 留下的 junction 会让后续 npm / 市场安装报 `ERR_PNPM_EPERM`」的判据与清理步骤
   （见「安装 → 装不上？…」），以及开发调试章节里「换回正式版前先清掉 junction」的提醒；
@@ -64,10 +104,14 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 | 0.3.1 | 与 0.3.0 内容相同，只把删 junction 的命令从 `Remove-Item -Recurse` 换成 `cmd /c rmdir`：旧版 Windows PowerShell（5.1）对 junction 用前者会连**链接目标**的内容一起删掉 |
 | 0.3.2 | 与 0.3.1 内容相同，只是改由仓库 CI（npm trusted publishing）发布，带 provenance，并在干净 Ubuntu 上复跑 tsc / build / selftest / clientsmoke |
 
-本版顺带用部署里的真件复核过 DSH **0.2.0-rc.1**：`node scripts/selftest.mjs`（146 项，含
-`@deepseek-ai/dsh-tools` 的工具 schema 校验器与 `@deepseek-ai/dsh-settings` 的 `volatileForm`）与
-`node scripts/clientsmoke.mjs`（50 项）全绿 —— `tools.restrict` / `tools.register` / `systemPrompt.section` /
-entry Config 这几个契约在 0.2.x 上没有变化。
+用部署里的真件复核过 DSH **0.2.0-rc.1 / 0.2.0-rc.2**：`node scripts/selftest.mjs` 与
+`node scripts/clientsmoke.mjs` 全绿（含 `@deepseek-ai/dsh-tools` 的工具 schema 校验器与
+`@deepseek-ai/dsh-settings` 的 `volatileForm`）——
+`tools.restrict` / `tools.register` / `systemPrompt.section` / entry Config 这几个契约在 0.2.x 上确实没变。
+
+⚠️ 但这几个契约没变**不代表插件就是好的**：真正变的是 `agent/session-start → agent/created` 与
+`confine` 的同步 → async（见「升级到 0.3.3」），而它们当年没有被复核到。
+现在这类漂移交给 `scripts/compatcheck.mjs` 逐版本核对。
 
 ## 升级到 0.2.0（DSH 0.1.7）
 
@@ -88,6 +132,8 @@ DSH 0.1.7 换了设置模型（旧 `ctx.settings.register` 已不存在），本
 本版按 DSH **0.1.7-rc.2** 的设置模型实现：host 侧是 volatile Config；浏览器侧优先用家族兼容层的
 `webUiSettings`，没有它就退回官方原生 `configForms.get(entryId)`（所以普通 0.1.7 部署也能用）。
 更旧的 DSH（0.1.5 那套 `ctx.settings.register` / `settingsScope`）请继续用 0.1.0。
+**0.3.3 起的最低支持版本是 DSH 0.1.7**（0.1.5 的 `agent/session-start` 与同步 `confine` 都不再兼容，
+也不打算兼容）。
 
 ## 极简模式（minimal）的影响
 
@@ -249,7 +295,8 @@ DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
 - **运行时只依赖 `@deepseek-ai/schemastery`**（entry Config 必须是真 schema，见「升级到 0.2.0」）；
   其余官方契约全部是 `src/host/types.ts` 的结构性窄化投影，工具定义与执行器都自带
   （因为 win32 上 `ctx.shell` 就是 pwsh，本插件不接管它）。
-- 替换发生在 `agent/session-start`，动作只有三个：在**该 agent 自己的 scope** 里
+- 替换发生在 per-agent 初始化事件 `agent/created`（0.1.5-rc.1 的 `agent/session-start` 自 0.1.6 起已被官方移除，
+  见「升级到 0.3.3」），动作只有三个：在**该 agent 自己的 scope** 里
   `tools.restrict({ deny: ['pwsh'] })`、`tools.register(<自包含 Git Bash 工具>)`、
   `systemPrompt.section({ name: 'tool:pwsh', order: 1010, text: '' })` 压掉残留提示词。
 - 沙箱升级（`sandbox_permissions` + 审批）按官方契约**逐字**复刻（`src/host/escalation.ts`），

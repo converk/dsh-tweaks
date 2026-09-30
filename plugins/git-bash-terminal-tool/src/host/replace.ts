@@ -1,5 +1,5 @@
 /**
- * 核心替换逻辑：在 `agent/session-start` 时，**在该 agent 自己的 scope 里**
+ * 核心替换逻辑：在 per-agent 初始化事件 `agent/created` 时，**在该 agent 自己的 scope 里**
  * 把 preset（祖先层）注册的 `pwsh` 工具隐藏，并注册一个自包含的 Git Bash 工具。
  *
  * 三条动作（设计文档 §5.2.3）：
@@ -46,6 +46,22 @@ export const ORDER_TOOL_PWSH = 1010
 /** `tool:bash` 的提示词正文（官方 `dsh-tool-bash` 用的同一句）。 */
 export const TOOL_BASH_SECTION_TEXT =
   'Check the [exit code: N] marker on every bash result; investigate failures before moving on.'
+
+/**
+ * per-agent 初始化事件名 —— 本插件的**唯一挂载点**。
+ *
+ * ⚠️ 这条常量是被 issue #1 逼出来的：DSH 0.1.5-rc.1 之后 **`agent/session-start`
+ * 已被官方移除**（0.1.6-alpha.1 起消失，0.1.7 / 0.2.0 各版本都没有），取而代之的是
+ * `agent/created`。两者载荷同形（`{ agent, source, signal }`），但事件名写错
+ * cordis **不报错、只是永远不触发** —— 表现就是「设置切了 bash，模型仍只看到 pwsh，
+ * 日志里连一条 `replace:` 都没有」（issue #1 就是这个）。
+ *
+ * 语义核对（`dsh-agent` 的 `runtime-types.d.ts`）：`agent/created` 是
+ * `@mode serial`，且在 creation resolve 之前被 **await**；官方文档明确要求
+ * 「在这个监听器里完成工具与提示词的安装再返回」，正是本插件需要的时机。
+ * 该事件在 0.1.5-rc.1、0.1.6、0.1.7-rc.2、0.2.0-rc.1/rc.2 上均存在（0.1.5 两者并存）。
+ */
+export const AGENT_INIT_EVENT = 'agent/created'
 
 /** 一次替换尝试的结果（用于诊断与设置行的状态显示）。 */
 export interface ReplaceAttempt {
@@ -231,7 +247,7 @@ export interface ReplaceListenerOptions {
 }
 
 /**
- * 注册 `agent/session-start` 监听器。
+ * 注册 `agent/created` 监听器（事件名见 {@link AGENT_INIT_EVENT}）。
  *
  * 根 context 上的监听器是**未带 scope 标签**的，按 `dsh-scope` 的投递规则会收到
  * 所有 agent 的事件（「untagged listeners globally」），所以一个插件实例就能覆盖
@@ -254,13 +270,13 @@ export function registerReplacement(options: ReplaceListenerOptions): () => void
       diag(`replace: listener failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  options.host.on('agent/session-start', listener)
+  options.host.on(AGENT_INIT_EVENT, listener)
   return () => {
     // WeakSet 无法清空；解绑后已处理的 agent 已释放，无需额外清理。
   }
 }
 
-/** 从 `agent/session-start` 载荷里取出 agent（结构窄化，不信任任何 import 类型）。 */
+/** 从 `agent/created` 载荷里取出 agent（结构窄化，不信任任何 import 类型）。 */
 function readAgent(payload: unknown): AgentLike | null {
   if (typeof payload !== 'object' || payload === null) return null
   const agent = (payload as Record<string, unknown>).agent

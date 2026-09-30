@@ -18,10 +18,12 @@
  * 且能避免测试源码被反斜杠转义问题干扰。
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
+  AGENT_INIT_EVENT,
+  apply,
   approveEscalation,
   bashOutputSchema,
   composePath,
@@ -595,6 +597,81 @@ section('替换：跳过分支')
 }
 
 // ---------------------------------------------------------------------------
+// 4b. 事件挂载 —— issue #1 回归
+// ---------------------------------------------------------------------------
+
+section('替换：挂在 DSH 真的会派发的事件上（issue #1 回归）')
+{
+  // ⚠️ cordis 的事件名是裸字符串：**写错不报错，只是永远不触发**。
+  // 真机上栽过：`agent/session-start` 自 DSH 0.1.6 起被官方移除（0.1.7 / 0.2.0 都没有），
+  // 于是「设置切了 bash，模型却仍只看到 pwsh，日志里连一条 replace: 都没有」。
+  // 这个 section 走的是公开入口 apply()：只要有人把事件名改回死名字，这里立刻红。
+  check('事件名常量是 agent/created', AGENT_INIT_EVENT === 'agent/created', AGENT_INIT_EVENT)
+
+  /** apply() 需要的假 ctx：记录 on() 订阅、提供替换链路要读的服务。 */
+  const services = { subprocess: { spawn() {} } }
+  const registered = []
+  const ctx = {
+    get: (name) => services[name],
+    on(name, listener) {
+      registered.push({ name, listener })
+      return () => {}
+    },
+    effect() {},
+  }
+  /** volatile 字段的稳定引用（与 Loader 交给 apply 的形状同形）。 */
+  const vol = (value) => ({ get: () => value })
+  // bashPath 用真实存在的文件（validateSettings 会查），node.exe 既存在也不是 WSL。
+  apply(ctx, { dialect: vol('bash'), bashPath: vol(process.execPath), bashCandidates: vol([]) })
+
+  check('apply 只订阅一个事件', registered.length === 1, String(registered.length))
+  check('订阅的是 agent/created', registered[0]?.name === 'agent/created', registered[0]?.name)
+
+  const { agent, calls } = fakeAgent({ services })
+  registered[0].listener({ agent, source: 'startup' })
+  check('收到事件后真的注册了 bash 工具', calls.register.length === 1 && calls.register[0].name === 'bash')
+  check(
+    'restrict 只 deny pwsh',
+    JSON.stringify(calls.restrict) === JSON.stringify([{ deny: ['pwsh'] }]),
+    JSON.stringify(calls.restrict),
+  )
+  check('压掉了 tool:pwsh 提示词', (calls.section.find((s) => s.name === 'tool:pwsh') ?? {}).text === '')
+
+  registered[0].listener({ agent, source: 'resume' })
+  check('同一个 agent 只处理一次（幂等）', calls.register.length === 1, String(calls.register.length))
+
+  registered[0].listener({ source: 'startup' })
+  registered[0].listener('garbage')
+  check('载荷异常时静默忽略（不抛）', calls.register.length === 1)
+}
+
+section('契约：per-agent 事件在部署里真的存在（有部署时）')
+{
+  const home = process.env.DSH_STABLE_HOME
+  if (home === undefined) {
+    console.log('  info 未提供 DSH_STABLE_HOME：跳过事件契约复核')
+  } else {
+    const entry = join(home, 'node_modules/@deepseek-ai/dsh-agent/lib/types/runtime-types.d.ts')
+    try {
+      const text = readFileSync(entry, 'utf8')
+      const declared = [...text.matchAll(/^\s*'([a-z-]+\/[a-z-]+)'\(/gm)].map((match) => match[1])
+      check('读到了事件声明', declared.length > 0, String(declared.length))
+      check(
+        '部署的 dsh-agent 真的声明了本插件订阅的事件',
+        declared.includes(AGENT_INIT_EVENT),
+        `${AGENT_INIT_EVENT} ∉ ${declared.join(', ')}`,
+      )
+      check(
+        '旧事件名 agent/session-start 已不存在（写回去就是死订阅）',
+        !declared.includes('agent/session-start'),
+      )
+    } catch (error) {
+      check('读取 dsh-agent 事件声明', false, error instanceof Error ? error.message : String(error))
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 5. 工具契约
 // ---------------------------------------------------------------------------
 
@@ -1140,7 +1217,9 @@ function confinedRuntime(extra) {
     shellSandboxMode: 'read-only',
     sandboxPolicy: { resolve: () => ({ mode: 'read-only', workspaceRoot: 'D:/work' }) },
     sandbox: {
-      confine: (argv, policy) => ({
+      // ⚠️ 真件（dsh-sandbox-local）的 confine 是 async：这里也必须是 Promise，
+      // 否则真机上的 `undefined is not iterable` 在自测里永远抓不到。
+      confine: async (argv, policy) => ({
         argv: ['D:/fake-runner.exe', '--mode', policy.mode, '--', ...argv],
         enforcement: 'partial',
         denialSignatures: ['access is denied'],
@@ -1286,6 +1365,60 @@ section('工具：后台任务钩子')
       String(error.message),
     )
   }
+}
+
+section('工具：后台 + 受限（confine 必须先 await，再进同步的 run()）')
+{
+  // ⚠️ 回归：`ctx.sandbox.confine` 自 DSH 0.1.6 起是 async，而 `jobs.start` 的 `run()`
+  // 必须**同步**交回 hooks —— 受限 argv 只能在进 run() 之前解析好。
+  // 写回同步版的话这里 spawn 到的 argv 就是 undefined（真机报 "undefined is not iterable"）。
+  const spawned = []
+  let hooks
+  const tool = createBashTool(
+    confinedRuntime({
+      subprocess: {
+        spawn(spec) {
+          spawned.push(spec.argv)
+          return {
+            collected: {
+              stdout: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+              stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+            },
+            done: Promise.resolve({ exitCode: 0, signal: null }),
+            terminate: () => undefined,
+          }
+        },
+      },
+      jobs: {
+        start(spec) {
+          hooks = spec.run()
+          return 'bash-bg-1'
+        },
+      },
+    }),
+  )
+  const value = await tool.execute(
+    { command: 'echo bg', description: 'background', run_in_background: true },
+    {
+      callId: 'call-bg3',
+      signal: new AbortController().signal,
+      agent: { id: 'a', session: { id: 'a', header: { cwd: 'D:/work' } }, ctx: {} },
+    },
+  )
+  check('后台返回 jobId', value.kind === 'background' && value.jobId === 'bash-bg-1', JSON.stringify(value))
+  check(
+    '后台 spawn 用的是 confine 包过的 argv（await 生效）',
+    spawned.length === 1 && Array.isArray(spawned[0]) && spawned[0][0] === 'D:/fake-runner.exe',
+    JSON.stringify(spawned[0] ?? null),
+  )
+  check('run() 仍同步交回 hooks', typeof hooks?.readOutput === 'function')
+  const outcome = await hooks.done
+  check(
+    '后台终态仍走官方 JobOutcome 形状',
+    outcome.status === 'completed' && outcome.detail === 'exit code: 0',
+    JSON.stringify(outcome),
+  )
+  check('readOutput 是字符串（沙箱事实在渲染里）', typeof hooks.readOutput() === 'string')
 }
 
 // ---------------------------------------------------------------------------

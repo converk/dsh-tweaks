@@ -8,7 +8,7 @@
  * 本文件只做装配，三块逻辑各自独立：
  * - `host/settings.ts` 声明 entry Config（volatile 字段 + 默认值，namespace = entry id）；
  * - `host/routes.ts` 开两条 `/api` 精确路由给设置行取数；
- * - `host/replace.ts` 在 `agent/session-start` 时按设置做 per-agent 替换。
+ * - `host/replace.ts` 在 `agent/created` 时按设置做 per-agent 替换（事件名见 `AGENT_INIT_EVENT`）。
  *
  * `inject` 故意保持为空（AGENTS.md §2.1：可选服务用 `ctx.get` + 判空），
  * 这样 headless 组合里也能挂上，服务缺失时只降级、不抛错。
@@ -50,7 +50,7 @@ export {
   sandboxDenialMarker,
   escalationHintMarker,
 } from './host/escalation.js'
-export { probeCapability, replaceTerminalTool } from './host/replace.js'
+export { AGENT_INIT_EVENT, probeCapability, replaceTerminalTool } from './host/replace.js'
 
 /**
  * 能力探测（对应 `../shared/protocol.ts` 的 `CapabilityView`）。

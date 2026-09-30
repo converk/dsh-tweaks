@@ -139,13 +139,19 @@ export interface BashToolRuntime {
   readonly subprocess: BashSubprocessLike
   /** `ctx.sandboxPolicy`（advertise 沙箱升级后必需）。 */
   readonly sandboxPolicy?: { resolve(request?: { session?: object; mode?: SandboxMode }): SandboxPolicyLike } | undefined
-  /** `ctx.sandbox`（受限模式必需）。 */
+  /**
+   * `ctx.sandbox`（受限模式必需）。
+   *
+   * ⚠️ `confine` 自 DSH **0.1.6** 起是 **async**（0.1.5-rc.1 还是同步返回值；本插件最低
+   * 支持 0.1.7，所以一律按 Promise 处理）。忘了 await 会拿到一个 Promise：
+   * `confined.argv` 是 undefined，真机表现就是 `Error: undefined is not iterable`。
+   */
   readonly sandbox?:
     | {
         confine(
           argv: readonly string[],
           policy: { mode: 'read-only' | 'workspace-write'; workspaceRoot: string; sessionId?: unknown },
-        ): ConfinedArgvLike
+        ): Promise<ConfinedArgvLike>
       }
     | undefined
   /** `ctx.jobs`（`run_in_background` 时必需）。 */
@@ -644,15 +650,20 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
     return service.resolve(exec.agent !== undefined ? { session: exec.agent.session as object } : {})
   }
 
-  /** 受限模式：把 argv 交给 `ctx.sandbox.confine`；未受限则原样执行。 */
-  const confineArgv = (
+  /**
+   * 受限模式：把 argv 交给 `ctx.sandbox.confine`；未受限则原样执行。
+   *
+   * ⚠️ `confine` 是 **async**（DSH 0.1.6 起；本插件最低 0.1.7）——必须 await，
+   * 否则拿到的是 Promise：`argv` 与 `runnerFailureRules` 全是 undefined。
+   */
+  const confineArgv = async (
     argv: readonly string[],
     policy: SandboxPolicyLike | undefined,
-  ): { argv: readonly string[]; confined?: ConfinedArgvLike | undefined } => {
+  ): Promise<{ argv: readonly string[]; confined?: ConfinedArgvLike | undefined }> => {
     if (policy === undefined || policy.mode === 'danger-full-access') return { argv }
     const provider = runtime.sandbox
     if (provider === undefined) throw new Error('bash: this call is confined but ctx.sandbox is missing')
-    const confined = provider.confine(argv, {
+    const confined = await provider.confine(argv, {
       mode: policy.mode,
       workspaceRoot: policy.workspaceRoot,
       ...(policy.sessionId !== undefined ? { sessionId: policy.sessionId } : {}),
@@ -705,19 +716,21 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
   }
 
   /** 后台分支：交给 `ctx.jobs`，返回后由 `job_output` / `job_kill` 接管。 */
-  const runBackground = (call: ResolvedCall, exec: ToolRunContextLike): BackgroundValue => {
+  const runBackground = async (call: ResolvedCall, exec: ToolRunContextLike): Promise<BackgroundValue> => {
     const jobs = runtime.jobs
     if (jobs === undefined) {
       throw new Error('background jobs unavailable: load @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs')
     }
     if (exec.signal.aborted) throw abortError()
     const { args, policy, workdir, env } = call
+    // `jobs.start` 要求 `run()` **同步**交回 hooks，而 `confine` 是 async ——
+    // 所以在进 run() 之前先把受限 argv 解析好（confine 只解析/物化策略，不 spawn）。
+    const { argv, confined } = await confineArgv([runtime.bashPath, '-c', args.command], policy)
     const jobId = jobs.start({
       kind: 'bash',
       label: args.command,
       ...(exec.agent !== undefined ? { owner: exec.agent as object } : {}),
       run: () => {
-        const { argv, confined } = confineArgv([runtime.bashPath, '-c', args.command], policy)
         const handle = runtime.subprocess.spawn({
           argv,
           cwd: workdir,
@@ -814,7 +827,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
     }, timeoutMs)
     timer.unref()
     const fused = AbortSignal.any([exec.signal, timeout.signal])
-    const { argv, confined } = confineArgv([runtime.bashPath, '-c', args.command], policy)
+    const { argv, confined } = await confineArgv([runtime.bashPath, '-c', args.command], policy)
     let handle: SubprocessHandleLike
     try {
       handle = runtime.subprocess.spawn({

@@ -2,10 +2,12 @@
  * 宿主侧 DSH 契约的**结构性窄化投影**。
  *
  * 本仓库规范（AGENTS.md §2.8）要求插件不引入对官方包的编译期/运行时依赖，
- * 因此这里只保留本插件真正读取的叶子字段。字段形状以本机 DSH 0.1.5-rc.1 部署
- * `D:\env\node-global\dsh-stable\node_modules\@deepseek-ai\` 的 d.ts 与运行时源码为准：
+ * 因此这里只保留本插件真正读取的叶子字段。字段形状以官方 **DSH ≥ 0.1.7**（0.1.7-rc.2 与
+ * 0.2.0-rc.1/rc.2 的 d.ts + 运行时源码都核对过；本插件最低支持 0.1.7）为准，
+ * 可用 `node scripts/compatcheck.mjs --fetch <版本>` 复核：
  *
- * - `agent/session-start` / `Agent.ctx`：`dsh-agent/lib/types/runtime-types.d.ts`
+ * - `agent/created` / `Agent.ctx`（事件名常量在 `host/replace.ts`）：`dsh-agent/lib/types/runtime-types.d.ts`
+ *   ⚠️ 0.1.5-rc.1 的 `agent/session-start` 自 0.1.6 起已被官方移除（issue #1），不要再写回去
  * - `tools.register` / `tools.restrict`：`dsh-tools/lib/types/index.d.ts`（`restrict` 实现见 `lib/index.js`）
  * - `systemPrompt.section`：`dsh-system-prompt/lib/types/index.d.ts`
  * - `sandboxPolicy.resolve`：`dsh-sandbox-policy/lib/types/index.d.ts`
@@ -48,10 +50,10 @@ export interface LoggerLike {
 // agent / 事件
 // ---------------------------------------------------------------------------
 
-/** 会话启动原因（`SessionStartSource`）。 */
+/** 会话启动原因（`SessionStartSource`；也是 `agent/created` 的 `source` 字段）。 */
 export type SessionStartSource = 'startup' | 'resume' | 'clear' | 'compact'
 
-/** `agent/session-start` 的载荷（只取本插件需要的两个字段）。 */
+/** per-agent 初始化事件的载荷（`agent/created`；只取本插件需要的字段）。 */
 export interface SessionStartPayload {
   readonly agent: AgentLike
   readonly source: SessionStartSource
@@ -213,8 +215,12 @@ export interface ConfinedArgvLike {
 
 /** `ctx.sandbox` 的最小面。 */
 export interface SandboxProviderLike {
-  /** 用 runner 包住 caller 的 argv；无法强制时 fail closed（抛错）。 */
-  confine(argv: readonly string[], policy: ConfinedSandboxPolicyLike): ConfinedArgvLike
+  /**
+   * 用 runner 包住 caller 的 argv；无法强制时 fail closed（抛错）。
+   *
+   * ⚠️ **async**（DSH 0.1.6 起；本插件最低 0.1.7）：必须 await，否则拿到 Promise。
+   */
+  confine(argv: readonly string[], policy: ConfinedSandboxPolicyLike): Promise<ConfinedArgvLike>
 }
 
 /** 一次运行后的沙箱事实（`ShellSandboxInfo` 的窄化）。 */
