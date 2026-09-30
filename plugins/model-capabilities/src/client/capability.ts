@@ -25,7 +25,7 @@
  *   其余字段按 id 继续继承内置目录），并删掉可能存在的 `modelOverrides`。
  *   这与官方编辑器你改任一官方字段时的行为一致，不会把目录压成一行。
  *
- * 字段语义以本机 DSH 0.1.2-rc.1 的 `dsh-llm-pi-ai` 为准：
+ * 字段语义以 `dsh-llm-pi-ai` 为准（0.1.7-rc.2 与 0.2.0-rc.2 两版核对未变）：
  * - `reasoningEfforts`：键集含 `off|minimal|low|medium|high|xhigh|max`，值是
  *   该档过线拼写；`off` 可留空（写 `null` = 不发参数）；非 `off` 档必须非空
  *   字符串；一旦给 dict，至少要有一个非 `off` 档；

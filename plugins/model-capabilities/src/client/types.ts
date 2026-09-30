@@ -1,8 +1,9 @@
 /**
  * DSH 客户端契约的最小结构类型。
  *
- * 这些类型是对本机 DSH 0.1.2-rc.1 真实契约的**结构性窄化投影**，只保留本插件
- * 实际读取的叶子字段，避免为此 import 任何官方包（运行时零依赖）：
+ * 这些类型是对 DSH 真实契约的**结构性窄化投影**（最近一次逐条核对：0.1.7-rc.2
+ * 与 0.2.0-rc.2 两份完整安装），只保留本插件实际读取的叶子字段，避免为此
+ * import 任何官方包（运行时零依赖）：
  * - `settings.models.provider-card` 的 owner props 与 `ProviderDirectoryEntry`
  *   来自 `@deepseek-ai/dsh-client-ui-settings-models/lib/types/client/{slot-contract,store}.d.ts`；
  * - `ctx.remote.settings` 来自
@@ -11,9 +12,10 @@
  * - `SettingsNamespaceView` 来自 `@deepseek-ai/dsh-settings/lib/types/types.d.ts`；
  * - `ctx.locale` 的三参非类型化 `register` / `bind` 来自
  *   `@deepseek-ai/dsh-client-locale/lib/types/client/index.d.ts`；
- * - `slots.inject` / `slots.register` 来自 `@deepseek-ai/dsh-client-ui-slots`
- *   （部署内无运行时目录，形状以官方 runner 的 Slot 目录与 settings-models 的
- *   调用点为准）。
+ * - `slots` 服务由 `@deepseek-ai/dsh-client-ui-renderer` 以 `super(ctx, "slots")`
+ *   提供，`inject(key, cb)` / `register(options, component)` 的实现与 keyed
+ *   槽位必须带 `key` 的规则在 `dsh-client-ui-renderer/lib/client.js` 与
+ *   `@deepseek-ai/dsh-client-ui-slots`（`SlotCore`，部署里有运行时目录）。
  *
  * **inject 注意**：`ctx.remote` 的子命名空间是 cordis Guard 代理，读
  * `ctx.remote.settings` 会被翻译成查询 `remote.settings` 服务；插件必须在

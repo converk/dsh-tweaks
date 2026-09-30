@@ -10,7 +10,8 @@
  * modelOverrides；未保存模型被拒；协议预置只填档位表、绝不写 compat。
  */
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const modulePath = new URL('../lib/capability.js', import.meta.url)
@@ -459,6 +460,237 @@ test('CAPACITY_PRESETS: 第一个就是 1M / 128K 的确切值', () => {
     maxTokens: '131072',
   })
 })
+
+// ---------------------------------------------------------------------------
+// DSH 契约防漂移
+//
+// 本插件的失效模式全是**静默**的：服务名 / slot 键 / 事件名 / DOM 类名写错，
+// cordis 与 tsc 都不报错，只是永不激活或什么都不注入（详见 README 的
+// 「DSH 兼容性」一节）。所以这里把用到的官方契约面钉成自测：
+// 1. 插件源码里的名字（不需要 DSH 部署，永远跑）；
+// 2. 官方产物里的原文（需要一份完整 DSH 安装，按环境变量给路径）。
+// 官方片段消失 = 该契约已漂移，自测必须报红。
+// ---------------------------------------------------------------------------
+
+test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判据', () => {
+  const clientIndex = readFileSync(new URL('../src/client/index.ts', import.meta.url), 'utf8')
+  const clientTypes = readFileSync(new URL('../src/client/types.ts', import.meta.url), 'utf8')
+  const augment = readFileSync(new URL('../src/client/augment.ts', import.meta.url), 'utf8')
+
+  // inject 的四个名字：官方客户端各自 provide / mount 的真实服务名。
+  assert.match(clientIndex, /export const inject = \['slots', 'locale', 'remote', 'remote\.settings'\]/)
+  // keyed slot 的键必须等于提供方的 settingsNs（官方按 entryKey 派发）。
+  assert.ok(clientIndex.includes("'settings.models.provider-card'"), 'slot 键')
+  assert.ok(clientIndex.includes("PROVIDER_CARD_KEYS = ['llm-pi-ai', 'llm-deepseek']"), '提供方 settingsNs')
+  // 官方 remote 事件名（白名单常量 API_REMOTE_FORWARDED_EVENTS 的成员）。
+  assert.ok(clientIndex.includes("'settings/document-updated'"), '设置变更事件名')
+  // locale 的非类型化三参 register + bind。
+  assert.ok(clientTypes.includes('register(ns: string, locale: string, dict: Record<string, string>): unknown'))
+  assert.ok(clientTypes.includes('bind(ns: string):'), 'locale.bind')
+
+  // DOM 判据：官方 CSS Module 的局部名（插件按子串匹配，哈希前缀不参与）。
+  for (const fragment of [
+    '_rowCard',
+    '_setupCard',
+    '_modelEntry',
+    '_modelList',
+    '_modelAdvanced',
+    '_modelRow',
+    '_editorActions',
+  ]) {
+    assert.ok(augment.includes(fragment), `augment.ts 丢了 DOM 判据 ${fragment}`)
+  }
+  assert.ok(augment.includes('input[type="text"], input:not([type])'), '模型 ID 输入框判据')
+})
+
+/**
+ * 官方产物里必须逐字出现的契约原文（任一片段消失 = 契约漂移）。
+ * `path` 相对 `<部署>/node_modules/@deepseek-ai`。
+ */
+const OFFICIAL_CONTRACT_FACTS = [
+  {
+    name: 'remote / remote.settings 是 traced 客户端服务（服务键 remote.<namespace>）',
+    path: 'dsh-api-gateway/lib/client.js',
+    includes: [
+      'function remoteServiceKey(namespace)',
+      'return `remote.${namespace}`;',
+      'super(ctx, remoteServiceKey(name));',
+      'super(ctx, "remote");',
+    ],
+  },
+  {
+    name: 'settings 命名空间由官方 remote 装配挂载',
+    path: 'dsh-api-remotes/lib/types/client/index.js',
+    includes: ['settingsControllerRemote', 'disposers.push(await ctx.remote.$mount(contribution));'],
+  },
+  {
+    name: 'remote.settings.describe / mutate 一元签名与 RemoteResult 分支',
+    path: 'dsh-api-settings-controller/lib/typert.remote-client.d.ts',
+    includes: [
+      "'settings': TypertRemoteNamespace$73657474696e6773",
+      'describe: () => Promise<RemoteResult<SettingsDescribeValue>>',
+      'mutate: (ns: string, ops: SettingsPathOpView[], expectedRevision: number | undefined) => Promise<RemoteResult<SettingsNamespaceView>>',
+    ],
+  },
+  {
+    name: 'settings/document-updated 的声明形状 (ns, revision) 与 describe 返回形状',
+    path: 'dsh-settings/lib/types/types.d.ts',
+    includes: [
+      "'settings/document-updated'(ns: SettingsNamespace, revision: number): void;",
+      'namespaces: SettingsNamespaceView[];',
+      'writable: boolean;',
+      'user?: JsonValue;',
+    ],
+  },
+  {
+    name: '事件转发保留原始实参顺序（...frame.args）',
+    path: 'dsh-api-gateway/lib/client.js',
+    includes: ['privateEvents(this.ownerCtx).parallel(this.eventKey(frame.event), ...frame.args)'],
+  },
+  {
+    name: 'settings/document-updated 在 host 转发白名单里，且实参按序转发',
+    path: 'dsh-api-remotes/lib/index.js',
+    includes: ['"settings/document-updated"', 'args: assertJsonArgs(event, args)'],
+  },
+  {
+    name: 'settings.models.provider-card：keyed + entryKey=settingsNs + owner props',
+    path: 'dsh-client-ui-settings-models/lib/types/client/slot-contract.d.ts',
+    includes: [
+      "'settings.models.provider-card':",
+      "kind: 'keyed';",
+      'owner: ProviderCardExtrasOwnerProps;',
+      'provider: ProviderDirectoryEntry;',
+      'configured: boolean;',
+      'keyConfigured: boolean;',
+    ],
+  },
+  {
+    name: 'ProviderDirectoryEntry.settingsNs / settingsPath / declared',
+    path: 'dsh-client-ui-settings-models/lib/types/client/store.d.ts',
+    includes: ['readonly settingsNs: string;', 'readonly settingsPath: readonly string[];', 'readonly declared?: boolean;'],
+  },
+  {
+    name: 'DOM 判据：模型行的 CSS Module 局部名仍在这 7 个',
+    path: 'dsh-client-ui-settings-models/lib/client.js',
+    includes: ['_rowCard', '_setupCard', '_modelEntry', '_modelList', '_modelAdvanced', '_modelRow', '_editorActions'],
+  },
+  {
+    name: 'DOM 判据：展开区仍是 contextWindow / maxTokens 两个 input 在前',
+    path: 'dsh-client-ui-settings-models/lib/client.js',
+    includes: [
+      'className: ModelsSection_module_css_default["modelAdvanced"]',
+      'children: [["contextWindow", "maxTokens"].map((field) =>',
+    ],
+  },
+  {
+    name: 'slots 服务名与 slots.inject(key, callback) / keyed 必填 key',
+    path: 'dsh-client-ui-renderer/lib/client.js',
+    includes: ['super(ctx, "slots");', 'inject(key, callback) {'],
+  },
+  {
+    name: 'keyed slot 注册必须带 key（插件正是按 key 挂两个提供方）',
+    path: 'dsh-client-ui-slots/lib/index.js',
+    includes: ['if (options.key === void 0) throw new Error(`keyed slot "${options.name}" requires options.key`);'],
+  },
+  {
+    name: 'locale 服务是 ctx.provide 的，且三参 register / bind 都在',
+    path: 'dsh-client-locale/lib/client.js',
+    includes: ['ctx.provide("locale", locale);', 'register(ns, localeOrDicts, dict) {', 'bind(ns) {'],
+  },
+  {
+    name: 'locale 非类型化三参 register 与 bind 的声明',
+    path: 'dsh-client-locale/lib/types/client/index.d.ts',
+    includes: ['register(ns: string, locale: string, dict: LocaleDict): () => void;', 'bind(ns: string): Translate;'],
+  },
+  {
+    name: 'llm-pi-ai 模型字段 input / reasoningEfforts（插件写入的字段名）',
+    path: 'dsh-llm-pi-ai/lib/types/catalog.d.ts',
+    includes: ['input?: PiAiModality[];', 'reasoningEfforts?: false | PiAiReasoningEfforts;'],
+  },
+  {
+    name: 'llm-deepseek 模型字段 inputModalities（插件写入的字段名）',
+    path: 'dsh-llm-deepseek/lib/index.js',
+    includes: ['inputModalities: z.array(z.union(MODEL_MODALITIES)).min(1).default(["text"])'],
+  },
+  {
+    name: '两个提供方 entry id 仍是插件注册席位用的 llm-pi-ai / llm-deepseek',
+    path: 'dsh-base/cordis.patch.yml',
+    includes: ['- id: llm-pi-ai', '- id: llm-deepseek'],
+  },
+]
+
+/**
+ * 顺序 / 结构判据：单纯「包含」表达不了的契约。
+ * @returns 失败原因；通过时 undefined。
+ */
+const OFFICIAL_STRUCTURE_CHECKS = [
+  {
+    name: '编辑器动作行 _editorActions 里取消在提交之前（插件取 buttons[0] / 最后一个）',
+    path: 'dsh-client-ui-settings-models/lib/client.js',
+    check(source) {
+      const start = source.indexOf('function EditorFooter(props)')
+      if (start < 0) return 'missing function EditorFooter(props)'
+      const body = source.slice(start, start + 1600)
+      const cancel = body.indexOf('secondaryButton')
+      const submit = body.indexOf('primaryButton')
+      if (cancel < 0 || submit < 0) return 'missing secondaryButton / primaryButton'
+      return cancel < submit ? undefined : 'primaryButton precedes secondaryButton'
+    },
+  },
+]
+
+/** 把环境变量给的一项收成「直接含 @deepseek-ai 的那层目录」。 */
+function officialRootOf(entry) {
+  const direct = join(entry, 'node_modules/@deepseek-ai')
+  if (existsSync(direct)) return direct
+  if (existsSync(entry) && entry.replace(/[\\/]+$/, '').endsWith('@deepseek-ai')) return entry
+  return undefined
+}
+
+/** 从环境变量解析要核对的 DSH 部署（可多份，用路径分隔符列表给 DSH_CONTRACT_HOMES）。 */
+function resolveOfficialRoots() {
+  const delimiter = process.platform === 'win32' ? ';' : ':'
+  const roots = []
+  for (const key of ['DSH_CONTRACT_HOMES', 'DSH_CONTRACT_HOME', 'DSH_STABLE_HOME', 'DSH_017_HOME']) {
+    const value = process.env[key]
+    if (value === undefined || value.length === 0) continue
+    for (const entry of value.split(delimiter)) {
+      if (entry.length === 0) continue
+      const root = officialRootOf(entry)
+      if (root !== undefined && !roots.includes(root)) roots.push(root)
+    }
+  }
+  return roots
+}
+
+const officialRoots = resolveOfficialRoots()
+if (officialRoots.length === 0) {
+  console.log(
+    '  info 未提供 DSH_CONTRACT_HOME / DSH_CONTRACT_HOMES / DSH_STABLE_HOME / DSH_017_HOME：' +
+      '跳过官方产物契约核对（只跑插件源码侧的名字断言）',
+  )
+} else {
+  for (const root of officialRoots) {
+    test(`官方契约原文 @ ${root}`, () => {
+      for (const fact of OFFICIAL_CONTRACT_FACTS) {
+        const file = join(root, fact.path)
+        assert.ok(existsSync(file), `缺少官方产物 ${fact.path}`)
+        const source = readFileSync(file, 'utf8')
+        for (const fragment of fact.includes) {
+          assert.ok(
+            source.includes(fragment),
+            `${fact.name}：${fact.path} 里找不到 ${JSON.stringify(fragment)}`,
+          )
+        }
+      }
+      for (const structure of OFFICIAL_STRUCTURE_CHECKS) {
+        const source = readFileSync(join(root, structure.path), 'utf8')
+        const failure = structure.check(source)
+        assert.equal(failure, undefined, `${structure.name}：${failure ?? ''}`)
+      }
+    })
+  }
+}
 
 // ---------------------------------------------------------------------------
 
