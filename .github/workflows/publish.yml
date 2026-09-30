@@ -28,9 +28,8 @@ on:
           - git-bash-terminal-tool
           - prompt-history
           - model-capabilities
-          # turn-file-revert 已停止维护（见 AGENTS.md §0）：列出只为发出最后一次 0.1.1，
-          # 之后不要再 bump 版本、也不要再打它的 tag。
-          - turn-file-revert
+          # turn-file-revert 已停止维护（见 AGENTS.md §0）：0.1.1 已于 2026-09 作为最后一次发布发出，
+          # 之后不再发布，故不列出（要补发需先重新加回这里与下面的 case 白名单）。
       dry_run:
         description: 只跑 npm publish --dry-run（不真正发布）
         required: false
@@ -67,8 +66,7 @@ jobs:
             dry="false"
           fi
           case "$plugin" in
-            # turn-file-revert 已停止维护，仅保留最后一次发布（0.1.1）的通道。
-            git-bash-terminal-tool|prompt-history|model-capabilities|turn-file-revert) ;;
+            git-bash-terminal-tool|prompt-history|model-capabilities) ;;
             *) echo "::error::未知插件 '$plugin'"; exit 1 ;;
           esac
           test -f "plugins/$plugin/package.json" || { echo "::error::找不到 plugins/$plugin/package.json"; exit 1; }
