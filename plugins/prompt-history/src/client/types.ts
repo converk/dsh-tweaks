@@ -4,8 +4,9 @@
  * 这些类型是对 DSH 真实契约（`@deepseek-ai/dsh-client-ui-slots` /
  * `@deepseek-ai/dsh-client-ui-chat` / `@deepseek-ai/dsh-client-ui-conversation`
  * 的 client contract）的**结构性窄化投影**：只保留本插件实际读取的叶子字段，
- * 避免为此引入对官方包的编译期依赖。字段形状以本机 DSH 0.1.2-rc.1 的
- * `lib/types/client/contract/*.d.ts` 为准。
+ * 避免为此引入对官方包的编译期依赖。字段形状以 DSH **0.1.7-rc.2 与 0.2.0-rc.2** 两份完整安装的
+ * `lib/types/client/contract/*.d.ts` 为准（0.2.0 契约审计：本文件读取的全部叶子字段在两版逐字未变）。
+ * 未受类型保护的运行时依赖（Slot 注入 props、`[data-composer-card]` DOM 判据）见 README §DSH 兼容性。
  */
 
 /** 快照选择器 hook：`useChat((snapshot) => value)`。 */
