@@ -28,7 +28,7 @@ on:
           - git-bash-terminal-tool
           - prompt-history
           - model-capabilities
-          - turn-file-revert
+          # turn-file-revert 已停止维护（见 AGENTS.md §0）：不再发布，故不列出
       dry_run:
         description: 只跑 npm publish --dry-run（不真正发布）
         required: false
@@ -65,7 +65,7 @@ jobs:
             dry="false"
           fi
           case "$plugin" in
-            git-bash-terminal-tool|prompt-history|model-capabilities|turn-file-revert) ;;
+            git-bash-terminal-tool|prompt-history|model-capabilities) ;;
             *) echo "::error::未知插件 '$plugin'"; exit 1 ;;
           esac
           test -f "plugins/$plugin/package.json" || { echo "::error::找不到 plugins/$plugin/package.json"; exit 1; }
