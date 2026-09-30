@@ -502,6 +502,61 @@ equal('pre-step 兜底：回合归属正确', [state.value.tracked, state.value.
 }
 
 // ---------------------------------------------------------------------------
+// 5. 官方契约复核（有部署时才跑）
+//
+// 事件名 / 方法签名写错时 cordis 不报错、tsc 也查不出来，只会静默永不触发（本仓库
+// issue #1 就是 `agent/session-start` → `agent/created` 这种漂移）。所以把本插件用到的
+// 每一条宿主契约在主进程里拿**官方声明原文**钉住：`DSH_STABLE_HOME` / `DSH_017_HOME`
+// 指向部署根目录（含 `node_modules/@deepseek-ai/`）时逐条复核。
+// ---------------------------------------------------------------------------
+
+/** 本插件用到的宿主契约：官方文件 → 必须逐字出现的声明片段。 */
+const HOST_CONTRACTS = [
+  // session/event：参数表 (session, event)，@mode emit
+  ['dsh-session/lib/types/index.d.ts', "'session/event'(this: Scoped<Session>, session: Session, event: SessionEvent): void;"],
+  // agent/pre-step：payload 带 turn，@mode waterfall 且必须自己调 next()
+  ['dsh-agent/lib/types/runtime-types.d.ts', "'agent/pre-step'(this: Scoped<Agent>, payload: {"],
+  ['dsh-agent/lib/types/runtime-types.d.ts', '}, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>;'],
+  // tools/pre-execute | post-execute：waterfall，next() 收尾
+  ['dsh-tools/lib/types/index.d.ts', "'tools/pre-execute'(this: Scoped<ToolRuntime>, exec: ToolExecution, next: () => Promise<PreToolDecision>): Promise<PreToolDecision>;"],
+  ['dsh-tools/lib/types/index.d.ts', "'tools/post-execute'(this: Scoped<ToolRuntime>, exec: ToolExecution, result: Readonly<ToolExecutionResult>, next: () => Promise<PostToolDecision>): Promise<PostToolDecision>;"],
+  // 事件载荷：tool/call 给出 turn + callId（回合归属的权威来源）
+  ['dsh-session/lib/types/types.d.ts', "'tool/call': {"],
+  ['dsh-session/lib/types/types.d.ts', 'callId: ToolCallId;'],
+  // ctx.fs：resolve/contains 与 writeText 的第 5 参 sandboxPolicy
+  ['dsh-fs/lib/types/index.d.ts', 'abstract resolve(path: string, opts?: {'],
+  ['dsh-fs/lib/types/index.d.ts', 'abstract contains(parent: FsTarget, child: FsTarget): boolean;'],
+  ['dsh-fs/lib/types/index.d.ts', 'abstract writeText(target: FsTarget, content: string, expected?: FsWriteIntent, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy): Promise<FsWriteOutcome>;'],
+  // ctx.sandboxPolicy：resolve({ session }) → mode / workspaceRoot / sessionId
+  ['dsh-sandbox-policy/lib/types/index.d.ts', 'resolve(request?: SandboxPolicyRequest): SandboxExecutionPolicy;'],
+  ['dsh-sandbox/lib/types/index.d.ts', 'workspaceRoot: string;'],
+  // 传输层：rpc.handle 与 fetch.register 都在（后者是 rpc 不可用时的兜底）
+  ['dsh-client-connection/lib/types/rpc.d.ts', 'handle(channel: string, handler: ConnectionRpcHandler): () => Promise<void>;'],
+  ['dsh-client-connection/lib/types/rpc.d.ts', 'register(route: ConnectionFetchRoute): () => Promise<void>;'],
+]
+
+/** 官方部署根目录候选（`node_modules/@deepseek-ai` 所在的上一层）。 */
+const contractHomes = [process.env.DSH_STABLE_HOME, process.env.DSH_017_HOME].filter(
+  (home) => typeof home === 'string' && home.length > 0,
+)
+if (contractHomes.length === 0) {
+  console.log('  info 未提供 DSH_STABLE_HOME / DSH_017_HOME：跳过官方 d.ts 契约复核')
+}
+for (const home of contractHomes) {
+  for (const [file, snippet] of HOST_CONTRACTS) {
+    const entry = join(home, 'node_modules/@deepseek-ai', file)
+    let text = null
+    try {
+      text = readFileSync(entry, 'utf8')
+    } catch {
+      check(`${file} 可读`, false, `${entry} 读不到`)
+      continue
+    }
+    check(`${file.split('/')[0]} 声明了 ${snippet.slice(0, 46)}`, text.includes(snippet), entry)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 清理
 // ---------------------------------------------------------------------------
 await rm(root, { recursive: true, force: true })

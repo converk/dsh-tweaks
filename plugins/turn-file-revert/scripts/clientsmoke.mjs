@@ -10,7 +10,8 @@
  *
  * 运行：`node scripts/clientsmoke.mjs`
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import vm from 'node:vm'
 
 let passed = 0
@@ -175,6 +176,64 @@ equal('回落请求是 { endpoint, payload } 形状', JSON.parse(fetchCalls[0]?.
   payload: { sessionId: 'session-smoke', turn: 9 },
 })
 equal('回落请求带 JSON content-type', fetchCalls[0]?.init?.headers?.['content-type'], 'application/json')
+
+// --- DOM 判据（没有任何类型保护：只能拿官方客户端产物核对） ------------------
+/**
+ * 本插件在官方 DOM 上认的锚点 → 官方产物里必须真的写着这个属性。
+ * 这些名字不在任何 d.ts 里，`tsc` 永远查不出来，所以这里直接扫官方发布的客户端产物。
+ */
+const OFFICIAL_DOM_ANCHORS = [
+  ['data-turn-tail', 'dsh-client-ui-chat/lib/client.js'],
+  ['data-actions-reveal', 'dsh-client-ui-chat/lib/client.js'],
+  ['data-changed-files', 'dsh-client-ui-deliverables/lib/client.js'],
+]
+/** 本插件曾经写错、官方产物里从不存在的属性名（0.1.1 修掉的那个回归）。 */
+const BOGUS_DOM_ANCHOR = 'data-produced-files-row'
+
+check('bundle 认官方「本轮文件改动」行的真实属性 data-changed-files', bundle.includes('data-changed-files'))
+check(`bundle 不再用从不存在的 ${BOGUS_DOM_ANCHOR}`, !bundle.includes(BOGUS_DOM_ANCHOR))
+
+/** 递归收集一个目录下的 js/mjs/css（官方客户端产物都是这几类文件）。 */
+function collectArtifacts(dir, out = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) collectArtifacts(path, out)
+    else if (/\.(js|mjs|css)$/.test(entry.name)) out.push(path)
+  }
+  return out
+}
+
+/** 官方部署根目录候选（`node_modules/@deepseek-ai` 所在的上一层）。 */
+const domHomes = [process.env.DSH_STABLE_HOME, process.env.DSH_017_HOME].filter(
+  (home) => typeof home === 'string' && home.length > 0,
+)
+if (domHomes.length === 0) {
+  console.log('  info 未提供 DSH_STABLE_HOME / DSH_017_HOME：跳过官方 DOM 判据复核')
+}
+for (const home of domHomes) {
+  const root = join(home, 'node_modules/@deepseek-ai')
+  let artifacts = []
+  try {
+    artifacts = collectArtifacts(root)
+  } catch (error) {
+    check(`官方产物可读：${root}`, false, error instanceof Error ? error.message : String(error))
+    continue
+  }
+  check(`官方产物扫描到了文件：${root}`, artifacts.length > 100, String(artifacts.length))
+  const found = new Set()
+  let bogus = 0
+  for (const file of artifacts) {
+    const text = readFileSync(file, 'utf8')
+    if (text.includes(BOGUS_DOM_ANCHOR)) bogus += 1
+    for (const [attr] of OFFICIAL_DOM_ANCHORS) {
+      if (text.includes(attr)) found.add(attr)
+    }
+  }
+  for (const [attr, file] of OFFICIAL_DOM_ANCHORS) {
+    check(`${attr} 在官方产物里存在（${file}）`, found.has(attr))
+  }
+  check(`${BOGUS_DOM_ANCHOR} 在官方产物里一个都没有（旧选择器是死代码）`, bogus === 0, String(bogus))
+}
 
 console.log(`\nturn-file-revert clientsmoke: ${String(passed)} passed, ${String(failures.length)} failed`)
 for (const failure of failures) console.log(`  ✗ ${failure}`)

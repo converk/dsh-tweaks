@@ -10,10 +10,13 @@
  * 因此这里走与本仓库 model-capabilities 相同的增量路线：注册一个隐藏锚点拿到
  * 会话身份，再观察转写区，把这一行**插到官方产物行之后、动作条之前**。
  *
- * 位置判据都取官方自己写在 DOM 上的稳定属性：
+ * 位置判据都取官方自己写在 DOM 上的属性：
  * - `[data-turn-tail="<turn>"]`：官方 TurnTailNodeView 的根（它同时带回合号）；
- * - `[data-produced-files-row]`：官方产物行的行元素。
- * 两者都是官方用于自身布局/交互观测的标记，比哈希类名稳定得多。
+ * - `[data-changed-files]`：官方产物行的行元素（ChangedFiles 卡片）；
+ * - `[data-actions-reveal]`：官方动作条的「已收尾」标记。
+ * 它们都是官方用于自身布局/交互观测的标记，比哈希类名稳定得多。
+ * ⚠️ 但这些名字**不在任何 d.ts 里**（`tsc` 查不出来），只能在官方客户端产物里核对：
+ * 实测的产物路径与结论见下面 `PRODUCED_SELECTOR` 的注释。
  *
  * ⚠️ 官方产物行只认**模型根调用**：它的 definition 用 `session/event` 的
  * `tool/call` 建 callId → path 映射，而 Code Dispatch（`run_code` 里的子调用）
@@ -34,12 +37,23 @@ const ROOT_ATTR = 'data-dsh-tfr'
 /** 官方回合尾部的根元素（值 = 回合号）。 */
 const TAIL_SELECTOR = '[data-turn-tail]'
 
-/** 官方「本轮文件改动」行。 */
-const PRODUCED_SELECTOR = '[data-produced-files-row]'
+/**
+ * 官方「本轮文件改动」行（`dsh-client-ui-deliverables` 的 ChangedFiles 卡片）。
+ *
+ * ⚠️ 这个属性名**没有任何类型保护**：官方 d.ts 里没有它，只能从官方**客户端产物**里读。
+ * 实测 0.1.7-rc.2 与 0.2.0-rc.2 两份部署的 `dsh-client-ui-deliverables/lib/client.js`：
+ * 真正的属性是 `data-changed-files`；本插件旧写法 `data-produced-files-row`
+ * **两个版本的任何官方产物里都不存在**（仓库 AGENTS.md §2.3 把它当稳定判据是错的；
+ * 官方另有 `data-presented-files-row`，那是「交付文件（present）」行，不是这一行）。
+ */
+const PRODUCED_SELECTOR = '[data-changed-files]'
 
 /**
  * 官方写在回合尾部根上的「是不是本会话最后一次对话」标记：
  * `always` = 最后一场对话，`hover` = 更早的回合（老回合整条 hover 才显形）。
+ *
+ * 它还兼着「这个回合已经收尾」的判据：官方只在 `closing !== null` 的分支渲染动作条，
+ * 也只有那个分支会写这个属性（见 `dsh-client-ui-chat/lib/client.js` 的 TurnTailNodeView）。
  */
 const LATEST_ATTR = 'data-actions-reveal'
 
@@ -146,7 +160,7 @@ function producedBlockOf(tail: HTMLElement): HTMLElement | null {
   return block === tail ? null : block
 }
 
-/** 自有元素的插入点：官方产物行之后，或（没有官方产物行时）动作条之前。 */
+/** 自有元素的插入点：官方全部内容之后（已收尾 = 动作条之前；流式中 = 官方内容之后）。 */
 interface InsertionPoint {
   /** `after` = 插到 `node` 之后；`before` = 插到 `node` 之前。 */
   readonly mode: 'after' | 'before'
@@ -157,20 +171,33 @@ interface InsertionPoint {
 /**
  * 本插件这一行该插到哪里。
  *
- * 首选官方「本轮文件改动」行之后（与它同一段）。官方那一行只在**模型根调用**
- * 改了文件时出现；PTC（`run_code` 子调用）修改不会让它出现，此时退回
- * 「动作条之前」——动作条是回合尾部的最后一个元素子节点（官方 TurnTailNodeView
- * 固定渲染 `[tail, MessageIconActions]`），插在它前面就等于接在官方内容之后。
+ * 官方 TurnTailNodeView 固定渲染 `[回合尾部席位内容, MessageIconActions]`，而且**只有已收尾
+ * 的回合**才渲染动作条、也只有收尾分支写 `data-actions-reveal`：
+ * - 已收尾（有动作条）→ 插到动作条之前 = 官方全部内容（「本轮文件改动」卡片 + 交付文件行）之后；
+ * - 流式中（还没有动作条）→ 接在官方「本轮文件改动」行之后；官方那一行只在**模型根调用**改了
+ *   文件时出现，PTC（`run_code` 子调用）修改不会让它出现，此时接在最后一个非自有元素之后。
+ *
+ * 之所以不无脑「插到官方改动行之后」：官方在有交付文件时渲染 `[改动卡片, 交付文件行]`，
+ * 插在改动卡片之后就会夹进官方两块内容之间。
  * @param tail - 回合尾部根元素。
- * @returns 插入点；两者都识别不出来时 null（这一轮先不挂）。
+ * @returns 插入点；官方结构还没渲染出来时 null（这一轮只跳过重定位，不删已有元素）。
  */
 function insertionPointOf(tail: HTMLElement): InsertionPoint | null {
+  if (tail.hasAttribute(LATEST_ATTR)) {
+    const last = tail.lastElementChild
+    // 已收尾：动作条是官方渲染的最后一个元素子节点。
+    if (last instanceof HTMLElement && !last.hasAttribute(ROOT_ATTR)) return { mode: 'before', node: last }
+    return null
+  }
   const produced = producedBlockOf(tail)
   if (produced !== null) return { mode: 'after', node: produced }
-  const last = tail.lastElementChild
-  if (last instanceof HTMLElement && !last.hasAttribute(ROOT_ATTR)) return { mode: 'before', node: last }
-  // 末位已经是自有元素（说明动作条没了）：这一轮无处可挂，交给下一次 sync 重建。
-  return null
+  let last: Element | null = tail.lastElementChild
+  // 自有元素可能已经是末位（上一次 sync 插进去的）：跳过它继续找官方内容。
+  while (last !== null && last instanceof HTMLElement && last.hasAttribute(ROOT_ATTR)) {
+    last = last.previousElementSibling
+  }
+  if (!(last instanceof HTMLElement)) return null
+  return { mode: 'after', node: last }
 }
 
 /** 组装 tooltip：本回合改了哪些文件、每个文件 +/- 多少。 */
@@ -304,9 +331,9 @@ export function augment(options: AugmentOptions): AugmentHandle {
       if (raw === null) continue
       const turn = Number(raw)
       if (!Number.isSafeInteger(turn) || turn < 0) continue
-      const point = insertionPointOf(tail)
-      if (point === null) continue
       const key = String(turn)
+      // 先登记「这个回合的尾部还在」，再决定插入点：插入点暂时算不出来时只跳过重定位，
+      // 不能把已经挂在屏幕上的自有行当成「回合消失」在末尾的清理里删掉。
       seen.add(key)
       let entry = entries.get(key)
       if (entry === undefined || entry.tail !== tail || !entry.root.isConnected) {
@@ -319,12 +346,15 @@ export function augment(options: AugmentOptions): AugmentHandle {
         entries.set(key, entry)
       }
       entry.latest = tail.getAttribute(LATEST_ATTR) === 'always'
-      const placed = point.mode === 'after'
-        ? entry.root.previousElementSibling === point.node
-        : entry.root.nextElementSibling === point.node
-      if (!placed) {
-        if (point.mode === 'after') point.node.insertAdjacentElement('afterend', entry.root)
-        else point.node.insertAdjacentElement('beforebegin', entry.root)
+      const point = insertionPointOf(tail)
+      if (point !== null) {
+        const placed = point.mode === 'after'
+          ? entry.root.previousElementSibling === point.node
+          : entry.root.nextElementSibling === point.node
+        if (!placed) {
+          if (point.mode === 'after') point.node.insertAdjacentElement('afterend', entry.root)
+          else point.node.insertAdjacentElement('beforebegin', entry.root)
+        }
       }
       render(entry)
       void ensureLoaded(entry)
