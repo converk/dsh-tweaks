@@ -626,23 +626,42 @@ section('替换：挂在 DSH 真的会派发的事件上（issue #1 回归）')
 
   check('apply 只订阅一个事件', registered.length === 1, String(registered.length))
   check('订阅的是 agent/created', registered[0]?.name === 'agent/created', registered[0]?.name)
-
-  const { agent, calls } = fakeAgent({ services })
-  registered[0].listener({ agent, source: 'startup' })
-  check('收到事件后真的注册了 bash 工具', calls.register.length === 1 && calls.register[0].name === 'bash')
   check(
-    'restrict 只 deny pwsh',
-    JSON.stringify(calls.restrict) === JSON.stringify([{ deny: ['pwsh'] }]),
-    JSON.stringify(calls.restrict),
+    '载荷异常不抛（结构窄化兜底）',
+    (() => {
+      try {
+        registered[0].listener({ source: 'startup' })
+        registered[0].listener('garbage')
+        return true
+      } catch {
+        return false
+      }
+    })(),
   )
-  check('压掉了 tool:pwsh 提示词', (calls.section.find((s) => s.name === 'tool:pwsh') ?? {}).text === '')
 
-  registered[0].listener({ agent, source: 'resume' })
-  check('同一个 agent 只处理一次（幂等）', calls.register.length === 1, String(calls.register.length))
+  // ⚠️ 下面这些动作**只有 Windows 会真的发生**：replaceTerminalTool 的首个判定就是
+  // `process.platform !== 'win32'`，非 win32 直接返回「platform is not win32」。
+  // 这个 guard 曾经漏过 —— CI 跑在 ubuntu 上，5 条断言全红、把发布卡在自测步骤。
+  if (process.platform !== 'win32') {
+    console.log('  skip 非 win32：替换动作的首个判定是平台（CI 走的就是这一支）')
+  } else {
+    const { agent, calls } = fakeAgent({ services })
+    registered[0].listener({ agent, source: 'startup' })
+    check('收到事件后真的注册了 bash 工具', calls.register.length === 1 && calls.register[0].name === 'bash')
+    check(
+      'restrict 只 deny pwsh',
+      JSON.stringify(calls.restrict) === JSON.stringify([{ deny: ['pwsh'] }]),
+      JSON.stringify(calls.restrict),
+    )
+    check('压掉了 tool:pwsh 提示词', (calls.section.find((s) => s.name === 'tool:pwsh') ?? {}).text === '')
 
-  registered[0].listener({ source: 'startup' })
-  registered[0].listener('garbage')
-  check('载荷异常时静默忽略（不抛）', calls.register.length === 1)
+    registered[0].listener({ agent, source: 'resume' })
+    check('同一个 agent 只处理一次（幂等）', calls.register.length === 1, String(calls.register.length))
+
+    registered[0].listener({ source: 'startup' })
+    registered[0].listener('garbage')
+    check('载荷异常不会触发第二次替换', calls.register.length === 1, String(calls.register.length))
+  }
 }
 
 section('契约：per-agent 事件在部署里真的存在（有部署时）')
