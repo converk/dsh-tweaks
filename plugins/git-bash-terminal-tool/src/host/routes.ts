@@ -1,5 +1,5 @@
 /**
- * `/api` 下的两条精确 Fetch 路由（AGENTS.md §2.4：**不要用** `ctx.connection.rpc.handle`）。
+ * `/api` 下的两条精确 Fetch 路由（AGENTS.md §3.5：**不要用** `ctx.connection.rpc.handle`）。
  *
  * - `POST /api/dsh-tweaks-terminal/state`    —— 平台、设置服务是否可见、当前值、能力探测。
  *   **不做任何文件系统/子进程扫描**：设置行每次挂载都要读它，扫描是秒级的。

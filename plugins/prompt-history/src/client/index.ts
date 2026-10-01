@@ -19,7 +19,7 @@ export const OVERLAY_ENTRY_ID = 'prompt-history'
  *
  * ⚠️ client bundle 的入口插件**必须**声明 `inject`：没有它插件会立刻激活，此时
  * `slots` 可能还没被 ui-renderer 提供，`ctx.get('slots')` 拿到 undefined 就直接返回，
- * 结果是**静默什么都不注册**（AGENTS.md §2.2）。`locale` 用来注册角标的 zh/en 文案。
+ * 结果是**静默什么都不注册**（AGENTS.md §3.3）。`locale` 用来注册角标的 zh/en 文案。
  */
 export const inject = ['slots', 'locale']
 

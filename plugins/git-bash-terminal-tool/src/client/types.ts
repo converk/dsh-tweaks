@@ -1,7 +1,7 @@
 /**
  * 浏览器半区用到的 DSH 契约的**结构性窄化投影**。
  *
- * 与 host/types.ts 同样的纪律（AGENTS.md §2.8）：client bundle 只允许 `require`
+ * 与 host/types.ts 同样的纪律（AGENTS.md §3.1）：client bundle 只允许 `require`
  * 页面种子模块（`react` / `react/jsx-runtime`），所以这里不 import 任何
  * `@deepseek-ai/*` 类型包，只按真实契约的形状窄化。字段形状以本机 DSH
  * 0.1.5-rc.1 / 0.1.7-rc.2 部署的 `lib/types/client/**` 为准：

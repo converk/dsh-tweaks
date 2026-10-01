@@ -28,7 +28,7 @@ on:
           - git-bash-terminal-tool
           - prompt-history
           - model-capabilities
-          # turn-file-revert 已停止维护（见 AGENTS.md §0）：0.1.1 已于 2026-09 作为最后一次发布发出，
+          # turn-file-revert 已停止维护（见 AGENTS.md §2）：0.1.1 已于 2026-09 作为最后一次发布发出，
           # 之后不再发布，故不列出（要补发需先重新加回这里与下面的 case 白名单）。
       dry_run:
         description: 只跑 npm publish --dry-run（不真正发布）

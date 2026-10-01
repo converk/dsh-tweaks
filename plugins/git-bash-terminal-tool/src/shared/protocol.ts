@@ -1,7 +1,7 @@
 /**
  * host / client 共用的协议定义（纯数据，无 node / DOM / React 依赖）。
  *
- * 只走 `/api` 下的精确 Fetch 路由（AGENTS.md §2.4）：
+ * 只走 `/api` 下的精确 Fetch 路由（AGENTS.md §3.5）：
  * - `POST /api/dsh-tweaks-terminal/state`   读当前状态（平台、能力探测结果；**不扫描**）
  * - `POST /api/dsh-tweaks-terminal/discover` 重新扫描（纯查询、无副作用）
  *

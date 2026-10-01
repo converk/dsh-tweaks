@@ -10,7 +10,7 @@
  * - `host/routes.ts` 开两条 `/api` 精确路由给设置行取数；
  * - `host/replace.ts` 在 `agent/created` 时按设置做 per-agent 替换（事件名见 `AGENT_INIT_EVENT`）。
  *
- * `inject` 故意保持为空（AGENTS.md §2.1：可选服务用 `ctx.get` + 判空），
+ * `inject` 故意保持为空（AGENTS.md §3.2：可选服务用 `ctx.get` + 判空），
  * 这样 headless 组合里也能挂上，服务缺失时只降级、不抛错。
  */
 import { readSettings, validateSettings } from './host/settings.js'

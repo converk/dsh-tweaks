@@ -4,7 +4,7 @@
  * 只做一件事：往 `settings.general.item`（设置→通用 里「一个紧凑的通用偏好项」的
  * 列表席位，Language / Appearance / Composer Enter 都在这里）注册一行「终端工具」。
  *
- * ⚠️ client bundle 的入口插件**必须**声明 `inject`（AGENTS.md §2.2）：没有它插件会
+ * ⚠️ client bundle 的入口插件**必须**声明 `inject`（AGENTS.md §3.3）：没有它插件会
  * 立刻激活，此时 `slots` 可能还没被提供，结果是**静默什么都不注册**。
  */
 import { createElement } from 'react'

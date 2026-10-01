@@ -10,7 +10,7 @@
  * 2026-09-13T23:41:35.123Z pid=19604 register: rpc=ok
  * ```
  *
- * 纪律（AGENTS.md §2.6）：诊断本身失败绝不影响主流程。
+ * 纪律（AGENTS.md §3.6）：诊断本身失败绝不影响主流程。
  */
 import { appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

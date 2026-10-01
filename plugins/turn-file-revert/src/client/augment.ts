@@ -43,7 +43,7 @@ const TAIL_SELECTOR = '[data-turn-tail]'
  * ⚠️ 这个属性名**没有任何类型保护**：官方 d.ts 里没有它，只能从官方**客户端产物**里读。
  * 实测 0.1.7-rc.2 与 0.2.0-rc.2 两份部署的 `dsh-client-ui-deliverables/lib/client.js`：
  * 真正的属性是 `data-changed-files`；本插件旧写法 `data-produced-files-row`
- * **两个版本的任何官方产物里都不存在**（仓库 AGENTS.md §2.3 把它当稳定判据是错的；
+ * **两个版本的任何官方产物里都不存在**（仓库 AGENTS.md §3.4 把它当稳定判据是错的；
  * 官方另有 `data-presented-files-row`，那是「交付文件（present）」行，不是这一行）。
  */
 const PRODUCED_SELECTOR = '[data-changed-files]'

@@ -1,7 +1,7 @@
 /**
  * 浏览器半区冒烟：bundle 协议 + apply + 行组件的平台闸门（纯 Node，不需要浏览器、不装 react）。
  *
- * 覆盖（AGENTS.md §2.2 的协议约束）：
+ * 覆盖（AGENTS.md §3.3 的协议约束）：
  * 1. `lib/client.js` 是**经典脚本**（不是 ESM），用 `window.__ModuleLoader__.load` 自注册；
  * 2. 工厂体是 CJS，只 `require` 页面种子模块（`react` / `react/jsx-runtime`）；
  * 3. 带**合法 v3 sourcemap trailer**；
