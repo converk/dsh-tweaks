@@ -37,6 +37,7 @@ import {
   isBlockedBash,
   parseBashArgs,
   parseExitStatus,
+  pathKey,
   probeCapability,
   probeDeploymentCapability,
   processOutcome,
@@ -1334,26 +1335,62 @@ section('工具：渲染与解析')
     entries.some((entry) => win(entry) === win('D:/env/Git/ucrt64/bin')),
     entries.join(' | '),
   )
-  const composed = composePath('D:/env/Git/bin/bash.exe', 'C:/Windows;D:/env/Git/cmd', (p) => present.has(win(p)))
-  const composedParts = composed.split(';').map((p) => win(p))
-  check(
-    'composePath 前置 Git 目录且保留环境 PATH',
-    composedParts[0] === win('D:/env/Git/usr/bin') && composedParts.at(-1) === win('C:/Windows'),
-    composed,
-  )
-  check(
-    'composePath 与环境 PATH 去重（同一目录不出现两次）',
-    composedParts.filter((part) => part === win('D:/env/Git/cmd')).length === 1,
-    composed,
-  )
+  // ⚠️ 这两条只在 win32 上有意义：win() 就是**平台自己的** resolve()，而产品内部的
+  // bashPathEntries 也用 resolve() 拼候选项 —— 在 POSIX 上 resolve('D:/env/Git','usr','bin')
+  // 会被拼成「cwd + /D:/env/Git/usr/bin」，Windows 字面量与路径去重都对不上（CI 跑 ubuntu
+  // 必红）。插件本身只在 win32 注册工具（replaceTerminalTool 首个判定就是平台），
+  // 所以按平台门控，而不是去改产品行为。
+  if (process.platform !== 'win32') {
+    console.log('  skip 非 win32：composePath 的顺序/去重断言依赖 Windows 路径语义')
+  } else {
+    const composed = composePath('D:/env/Git/bin/bash.exe', 'C:/Windows;D:/env/Git/cmd', (p) => present.has(win(p)))
+    const composedParts = composed.split(';').map((p) => win(p))
+    check(
+      'composePath 前置 Git 目录且保留环境 PATH',
+      composedParts[0] === win('D:/env/Git/usr/bin') && composedParts.at(-1) === win('C:/Windows'),
+      composed,
+    )
+    check(
+      'composePath 与环境 PATH 去重（同一目录不出现两次）',
+      composedParts.filter((part) => part === win('D:/env/Git/cmd')).length === 1,
+      composed,
+    )
+  }
 
   // 环境注入：官方那 4 个 ENV_OVERRIDES + Windows 专属默认（Python stdio 编码）。
   // ⚠️ 真机可复现：原生程序按 ANSI 代码页（中文机器 936）写管道，DSH 按 UTF-8 解码 →
   // `cmd /c ver` / `python -c "print('中文')"` 读回来是乱码。cmd 改不了，Python 能改。
-  const envRuntime = { bashPath: 'D:/env/Git/bin/bash.exe', subprocess: { spawn() {} } }
+  // ⚠️ 这里**不能**断言「PATH 里含 Git」：composeEnv 用的是真 existsSync + 真 process.env.PATH，
+  // 在 MSYS2-only 的机器（没有 D:/env/Git）与 CI（ubuntu）上都会红 —— 正是「自测绑死某台机器的
+  // 环境」那条老路。要断言的是**契约**：composePath 只补真实存在的目录（旧实现会塞进 4 个不存在
+  // 的目录），且环境 PATH 原样保留；bashPath 用本机真的能发现到的那个。
+  const envRuntime = { bashPath: GIT_BASH ?? 'D:/env/Git/bin/bash.exe', subprocess: { spawn() {} } }
   const injected = composeEnv(envRuntime, { callId: 'c-env', signal: new AbortController().signal })
   check('注入 NO_COLOR / TERM / PAGER / GIT_PAGER', injected.TERM === 'dumb' && injected.NO_COLOR === '1' && injected.PAGER === 'cat' && injected.GIT_PAGER === 'cat')
-  check('注入受管 PATH', typeof injected.PATH === 'string' && injected.PATH.includes('Git'), String(injected.PATH).slice(0, 80))
+  {
+    const ambientKeys = new Set(
+      String(process.env.PATH ?? '')
+        .split(';')
+        .map((part) => pathKey(part.trim()))
+        .filter((key) => key.length > 0),
+    )
+    const injectedEntries = String(injected.PATH ?? '')
+      .split(';')
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+    // 只有「环境 PATH 里本来没有」的条目才是 composePath 自己补的 → 它们必须真实存在。
+    const added = injectedEntries.filter((entry) => !ambientKeys.has(pathKey(entry)))
+    check(
+      '注入受管 PATH：补进来的目录都真实存在（回归：曾经塞进 4 个不存在的目录）',
+      typeof injected.PATH === 'string' && injected.PATH.length > 0 && added.every((entry) => existsSync(entry)),
+      added.join(' | ') || '(一条都没补)',
+    )
+    check(
+      '注入受管 PATH：环境 PATH 原样保留（没被整段吃掉）',
+      ambientKeys.size === 0 || injectedEntries.some((entry) => ambientKeys.has(pathKey(entry))),
+      String(injected.PATH).slice(0, 80),
+    )
+  }
   if (process.platform === 'win32') {
     check(
       'Windows 上默认注入 PYTHONIOENCODING=utf-8（Python 输出中文不再是乱码）',
@@ -1673,6 +1710,52 @@ section('工具：后台 + 受限（confine 必须先 await，再进同步的 ru
 }
 
 // ---------------------------------------------------------------------------
+// 7a. provider（子进程实现）在 spawn 之后失败：必须让工具调用 isError
+// ---------------------------------------------------------------------------
+
+section('工具：provider 失败不再伪装成 [exit code: 0]')
+{
+  // ⚠️ 回归：早先这里把 provider 的失败说明塞进 stderr、返回 exitCode: null，而 renderResult
+  // 会把 null 渲染成 [exit code: 0] —— 一个**基础设施失败**看起来像「命令成功、只是没输出」。
+  // 官方 dsh-bash-local 的 result() 是直接抛回原错误（if (providerFailure !== undefined) throw ...）。
+  const providerError = new Error('runner exploded before reporting an outcome')
+  const tool = createBashTool({
+    bashPath: 'D:/env/Git/bin/bash.exe',
+    subprocess: {
+      spawn() {
+        return {
+          collected: {
+            stdout: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+            stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+          },
+          done: Promise.reject(providerError),
+          terminate() {},
+        }
+      },
+    },
+  })
+  let thrown
+  try {
+    const value = await tool.execute(
+      { command: 'echo never', description: 'provider failure' },
+      {
+        callId: 'call-provider',
+        signal: new AbortController().signal,
+        agent: { id: 'session-provider', session: { header: { cwd: 'D:/work' } } },
+      },
+    )
+    thrown = { notThrown: true, value }
+  } catch (error) {
+    thrown = error
+  }
+  check(
+    'provider 失败时 execute 抛回原错误（而不是返回 exit code 0 的前台值）',
+    thrown === providerError,
+    thrown !== undefined && thrown.notThrown === true ? JSON.stringify(thrown.value) : String(thrown),
+  )
+}
+
+// ---------------------------------------------------------------------------
 // 7b. 「前台超时 → 转后台」（官方 0.2.x 的 promote）
 // ---------------------------------------------------------------------------
 
@@ -1827,7 +1910,13 @@ section('诊断日志：自测写自己的文件，不污染生产日志')
   check('diagFile 跟随 DSH_GIT_BASH_DIAG_FILE 覆盖', diagFile() === DIAG_SINK, diagFile())
   const text = existsSync(DIAG_SINK) ? readFileSync(DIAG_SINK, 'utf8') : ''
   check('本自测的诊断确实落在临时文件里', text.includes('apply: platform='), text.slice(0, 100))
-  check('假 agent（session-1）的替换记录也在临时文件里', text.includes('agent=session-1'), text.slice(0, 100))
+  // ⚠️ 平台门控：替换动作只在 win32 发生（replaceTerminalTool 的首个判定），非 win32 时监听器
+  // 根本不会走到写 replace: 那一步 —— 不加这个判断，CI（ubuntu）上必红。
+  if (process.platform === 'win32') {
+    check('假 agent（session-1）的替换记录也在临时文件里', text.includes('agent=session-1'), text.slice(0, 100))
+  } else {
+    console.log('  skip 非 win32：替换动作不执行，不会写 replace: 记录')
+  }
 }
 
 // ---------------------------------------------------------------------------
