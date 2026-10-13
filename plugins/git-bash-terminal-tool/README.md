@@ -13,7 +13,10 @@ system prompt、终端卡片里都是 PowerShell 方言。装了这个插件之�
 - 模型看到的工具**叫 `bash`**，描述改成 Git Bash 方言（POSIX 路径、`$VAR`、不需要 `C:\` 转义）；
 - `pwsh` 从模型可见的工具目录里**消失**（包括 PTC 模式生成的 SDK 签名）；
 - system prompt 里那段 PowerShell 提示词被压掉，换成 bash 的那段；
-- 终端卡片、退出码 pill、后台 `job_output` / `job_kill`、沙箱拒绝与升级，表现与官方一致。
+- 终端卡片、退出码 pill、后台 `job_output` / `job_kill`、沙箱拒绝与升级，表现与官方一致；
+- **前台等超时会「转后台」而不是杀掉命令**（官方 0.2.x 的 `promoteOnTimeout` 语义）：
+  长命令等满 `timeoutMs` 后继续在后台跑，调用立刻交回 job id 与「到目前为止的输出」，
+  之后用 `job_output` 读、`job_kill` 停，跑完还会收到一条完成通知。
 
 切换**只对新会话生效**：运行中的会话保持它启动时的选择（这样工具目录与提示词不会中途变化，
 KV cache 与历史工具调用都不会错位）。改完开一个新会话即可。
@@ -41,12 +44,110 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 - 路径栏只显示路径本身：候选来源（`Git for Windows` / `MSYS2` / …）与 `bash --version`
   这类扫描细节不再摊在设置页里 —— 多条路径时路径栏就是选择器。
 - 一个候选都没找到时，`Git Bash` 依然可选（只是还没有路径可用），点「自动发现」会给出一行「没有找到」说明。
-- 路径栏可以手填，但**只有真实存在且不是 WSL 的 `bash.exe` 才会生效**：每次新会话替换前校验，
-  不合法就跳过替换（会话照旧 pwsh）并写一行诊断；路径为空是合法中间态。
+- 路径栏可以手填，但**只有「文件名叫 `bash`/`bash.exe`、真实存在、且不是 WSL」的路径才会生效**：
+  每次新会话替换前校验，不合法就跳过替换（会话照旧 pwsh）并写一行诊断；路径为空是合法中间态。
+  0.4.0 起加了**文件名判据**（见下），因为「存在即合法」会放进任何 exe。
 - 运行时如果这台机器/这个 DSH 版本不具备替换所需的扩展点，设置行会显示「当前版本不支持：<原因>」，
   会话**完全不受影响**（插件不抛错、不 veto，只写诊断日志）。
 
 ![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/git-bash-terminal-tool.png)
+
+## 升级到 0.4.0（与 DSH 0.2.x 的后台/超时契约对齐）
+
+这一版把工具执行面按 DSH **0.2.0-rc.2** 的官方契约重新对齐，并修掉两个真机上会静默出错的问题。
+
+**① 前台超时不再杀命令，改为「转后台」（官方 `promoteOnTimeout`）**
+
+官方 0.2.x 的 `dsh-tool-bash` 在超时后**不杀进程**：命令继续跑，调用交回 job id 与已产出的输出，
+之后由 `job_output` / `job_kill` 接管（`output.schema` 因此多了 `promoted` 分支）。
+0.4.0 之前本插件是「超时即杀」——一个跑了 2 分钟的构建会在第 120 秒被干掉，白跑。
+
+现在行为与官方一致：
+
+```text
+<到目前为止的输出>
+[still running after 120000ms; moved to background job bash-3]
+The command keeps running in the background. You will be notified when it finishes; read newer output with job_output, stop it with job_kill.
+```
+
+`timeoutMs` 的措辞也跟着变（"…on expiry the command moves to the background as a job instead of being killed."）。
+**能力探测**：这套需要注册表齐 `wait` / `read` / `kill` / `remove`（0.2.x 才齐）。缺任何一个
+（例如 DSH 0.1.7）插件**自动退回**「超时即杀」，工具描述也会退回旧措辞——不会因缺方法而报错。
+
+**② 后台任务的输出以前是空的（`job_output` 读不到任何东西）**
+
+`ctx.jobs` 的注册表**只认** `start({ output: [...] })` 这种「拉取源」：它按源把 stdout / stderr
+泵进任务的输出环，`job_output` 读的就是那个环。0.4.0 之前本插件写的是在 hooks 上返回一个
+`readOutput()` —— `dsh-jobs-local` 里**根本没有这个成员**，于是：
+
+> 后台任务照常跑完、状态也对（`completed` / `exit code: 0`），但 `job_output` **永远是空的**。
+
+现在两路流都通过 `output` 拉取源接入（并有 `clientsmoke` + `compatcheck` 双重防线）。
+顺带修掉同一处的另一个问题：`owner` 必须是 **agent id（session id）字符串**，注册表拿它
+`agents.get()` 反查活着的 agent；传 agent 对象会抛 `session "[object Object]" has no live agent`。
+
+**③ PATH 里不再出现不存在的目录**
+
+`bashPathEntries` 原来一律用 `..\..` 推 Git 安装根，但 Git for Windows 有**两个** bash：
+`<root>\bin\bash.exe`（启动器）与 `<root>\usr\bin\bash.exe`（真正的 MSYS2 bash）。选前者时
+`..\..` 会越过安装根落到 `C:\Program Files`，于是**每条命令**的 PATH 里都被塞进：
+
+```text
+C:\Program Files\bin        ← 不存在
+C:\Program Files\usr\bin    ← 不存在
+C:\Program Files\cmd        ← 不存在
+C:\Program Files\mingw64\bin ← 不存在（而且 UCRT64 版 Git 用的是 ucrt64\bin）
+```
+
+真机实测：PATH 前 8 条里 4 条是死目录，而真正有用的 `…\Git\usr\bin` 反倒没被补上。
+现在按「`bin` 上一层 / `usr\bin` 上两层」正确反推安装根，**只收录真实存在的目录**，
+并按 `ucrt64` → `mingw64` → `clang64` 探测真实子环境（不再写死 mingw64）；
+与环境里已有的 PATH 条目按「分隔符 + 大小写」归一化去重。
+
+**④ 其余对齐官方 0.2.x 的细节**
+
+| 项 | 说明 |
+|---|---|
+| `stopped` 字段 | 运行被 `job_kill` 停掉时，前台结果里带上停止原因（渲染成 `[stopped: …]`） |
+| 沙箱事实 | 修掉「第一次读发生在进程还在跑时，就把 `denied: false` 永久缓存」的 bug——沙箱拒绝现在一定报得出来 |
+| `processOutcome` | 沙箱注记拼进任务的 `detail`（任务列表那一行也看得到拒绝） |
+| 任务登记被拒 | 例如该 owner 的并发任务已达上限时，**降级**为前台硬超时并写一行诊断，而不是让调用失败 |
+| 渲染 | 「转后台」走通用卡片（不给退出码 pill），与官方 `presentBashResult` 一致 |
+| provider 失败 | 子进程实现（沙箱 runner 等）在 spawn 之后崩掉时，**渲染前就把原错误抛回**（工具调用 isError），不再把 `exitCode: null` 渲染成看起来像成功的 `[exit code: 0]` |
+
+**⑤ 自测/兼容闸门**
+
+- `scripts/selftest.mjs` 不再写死作者机器上的 bash 路径（那是**换机即崩**的写法）：
+  改为走发现算法，找不到就把依赖真实路径的断言整段 skip。新增「转后台 / 能力探测 / 输出拉取源 /
+  `stopped` / PATH 组装」等回归断言。
+- `scripts/compatcheck.mjs` 新增三条契约（`output` 拉取源、`owner` 解析、`wait/read/kill/remove`），
+  并支持标 `optional: true` 的**可选契约**（缺失只告警、不算失败，供 0.1.7 这类老部署）。
+- 顺手修掉 `--fetch` 在 Windows 上的一个真 bug：原来把含盘符的绝对路径交给 `tar`，
+  MSYS / GNU tar 会把 `D:` 当成远程主机（`tar: Cannot connect to D: resolve failed`）。
+
+**⑥ 子进程输出编码：Python 的中文不再是乱码**
+
+原生 Windows 程序按 ANSI 代码页（中文机器 936/GBK）写管道，DSH 按 UTF-8 解码，
+所以 `python -c "print('中文')"`、`tasklist` 这类输出读回来都是乱码。
+`cmd` / `powershell` 插件改不了（解码在 DSH 的 subprocess 层），但 **Python 能修**：
+现在默认注入 `PYTHONIOENCODING=utf-8`（**只在环境里没有该变量时**注入，不覆盖你自己的设置）。
+详见「已知限制 → 原生 Windows 程序的输出编码」。
+
+**⑦ 路径校验加文件名判据（行为变更）+ 自测不再污染诊断日志**
+
+两处都是「追一个幽灵问题」追出来的，根因是同一件事：**自测拿 `process.execPath`
+（`…\nodejs\node.exe`）当「存在的 bash 路径」替身，而校验当时只判「存在 + 不是 WSL」**。
+
+- **校验现在要求文件名是 `bash` 或 `bash.exe`**（不做任何 spawn，只看名字）。
+  旧口径下**任何** exe 都会被当成 bash 接受，于是一个填错的 `bashPath` 会**静默注册一个
+  坏掉 bash 工具**：`node.exe -c "echo hi"` 里的 `-c` 是 `--check`，什么都不执行，模型只看到
+  一片空白。现在会明确拒绝并在设置行/诊断里给出原因（会话退回 pwsh，不会半坏）。
+  ⚠️ 这是**行为变更**：手填的非 bash 路径不再被接受；`Git for Windows` / `MSYS2` / `Cygwin`
+  的 bash 一律叫 `bash(.exe)`，正常路径不受影响。
+- **自测的诊断改道到自己的临时文件**，通过 `DSH_GIT_BASH_DIAG_FILE` 覆盖（见「排障」）。
+  之前两者共用一个日志文件，生产日志里混进了 100 多行测试记录
+  （`replace: applied agent=session-1 bash=…node.exe`），把真问题淹掉、还让人误以为
+  另有一个跑歪的 DSH 实例。
 
 ## 升级到 0.3.3（修复：在 DSH 0.1.6+ 上替换根本没生效）
 
@@ -216,7 +317,7 @@ cmd /c rmdir "$profile\node_modules\dsh-tweaks-git-bash-terminal-tool"
 
 > 这不是包内容的问题：把同一个包 `npm pack` 后在干净工程里 `pnpm add`、或用市场装到没有历史 link 的
 > profile 里都正常。只有「同一个包里既有本地 link、又要换成 registry 版本」时才会踩到。
-> 想少踩：开发调试改用 tarball（`npm pack` 后 `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.3.0.tgz`），
+> 想少踩：开发调试改用 tarball（`npm pack` 后 `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.4.0.tgz`），
 > 它不会留下 junction。
 
 ## 卸载
@@ -245,6 +346,49 @@ cmd /c rmdir "$profile\node_modules\dsh-tweaks-git-bash-terminal-tool"
 | 只对新会话生效 | 运行中的会话保持启动时的终端选择（有意为之） |
 | 极简模式会退化成一次性 shell | `minimal` 是唯一用持久 PTY 的官方预设；本插件在 win32 上把它的 `pwsh` 换成一次性 Git Bash（见「极简模式（minimal）的影响」） |
 | 宿主侧改动要重启 | 与其他 DSH 插件一样：Node ESM 缓存，改宿主代码必须重启 |
+| 原生 Windows 程序的中文输出是乱码 | 见下节「已知限制：原生 Windows 程序的输出编码」 |
+| 「超时转后台」需要 DSH 0.2.x | 注册表齐 `wait`/`read`/`kill`/`remove` 才有；更老的 DSH 上自动退回「超时即杀」 |
+
+### 已知限制：原生 Windows 程序的输出编码（与插件无关，Python 已缓解）
+
+Git Bash 自己（`ls` / `grep` / `git` / bash 内建）输出 UTF-8，**中文一直是好的**。乱码只出现在
+**原生 Windows 程序**上：它们把 stdio 按 **ANSI 代码页**（中文机器上是 936 / GBK）写进管道，
+而 DSH 的采集端（`dsh-subprocess-local`）按 UTF-8 解码，于是：
+
+```text
+$ cmd /c ver
+Microsoft Windows [�汾 10.0.19045.6466]      ← 「版本」
+
+$ tasklist
+ӳ������   PID �Ự��   �Ự#   �ڴ�ʹ��    ← 「映像名称 / PID / 会话名 / 内存使用」
+```
+
+实测结论：
+
+- **`chcp 65001` 没有用**。它只改*控制台*代码页，而写**管道**用的是 `GetACP()` / `GetOEMCP()`，
+  这两者不受 `chcp` 影响（本机复核过：加了 `chcp` 输出照旧乱码）。
+- **`cmd` / `powershell` / `tasklist` 这类插件改不了**：解码发生在 DSH 的 subprocess 采集层，
+  不在本插件里。
+- **Python 可以修，而且已经修了**：0.4.0 起默认注入 `PYTHONIOENCODING=utf-8`
+  （**只在环境里没有该变量时**才注入，不会覆盖你自己的设置），
+  于是 `python -c "print('中文')"` 这类输出不再是乱码。
+  只设 stdio 编码、不设 `PYTHONUTF8=1`——后者连 `open()` 与文件系统编码的默认值一起改，面太大。
+
+想彻底解决，只能改系统设置（Windows「区域设置 → 管理 → 更改系统区域设置 →
+Beta: 使用 Unicode UTF-8 提供全球语言支持」），或者给对应程序单独指定编码。
+
+### 顺带一提：Git Bash 里 `cmd /c` 会被 MSYS 改写
+
+MSYS2 会把看起来像路径的参数做转换，`/c` 正好撞上，于是 `cmd /c ...` 变成**交互式** cmd
+（打印 banner 后挂住，看起来像命令卡死）：
+
+```text
+$ cmd /c "echo hi"          # 挂住：/c 被当成路径改写掉了
+$ cmd //c "echo hi"         # ✅ 双斜杠转义
+hi
+$ MSYS2_ARG_CONV_EXCL='*' cmd /c "echo hi"   # ✅ 或者关掉参数转换
+hi
+```
 
 ## 排障
 
@@ -253,6 +397,14 @@ cmd /c rmdir "$profile\node_modules\dsh-tweaks-git-bash-terminal-tool"
 ```powershell
 Get-Content "$env:TEMP\dsh-git-bash-terminal-tool.log" -Tail 30
 ```
+
+> **测试不写这个文件。** `scripts/selftest.mjs` 会故意调用真 `apply()`（抓「事件名写错就静默失效」
+> 的回归），所以它必须把诊断改道到自己的临时文件 —— 它是通过环境变量 **`DSH_GIT_BASH_DIAG_FILE`**
+> 做到的，`diag.ts` 每次写入时读这个变量。
+>
+> 这不是洁癖：0.4.0 之前两者共用一个文件，生产日志里混进了 100 多行只可能来自测试的记录
+> （`replace: applied agent=session-1 bash=…/nodejs/node.exe`），排查时被读成
+> 「另有一个跑歪的 DSH 实例」，白追了一轮。**自己写脚本调 `apply()` 时也请设这个变量。**
 
 常见几行：
 
@@ -276,8 +428,11 @@ Get-Content "$env:TEMP\dsh-git-bash-terminal-tool.log" -Tail 30
 ```powershell
 node build.mjs
 node node_modules/typescript/bin/tsc --noEmit
-node scripts/selftest.mjs        # 发现算法 / 设置 / 升级契约 / 替换 / 工具契约 + 真机跑 Git Bash
+node scripts/selftest.mjs        # 发现算法 / 设置 / 升级契约 / 替换 / 工具契约 / 转后台 + 真机跑 Git Bash
 node scripts/clientsmoke.mjs     # client bundle 协议 + apply + 行组件
+
+# 契约漂移闸门：拿官方产物逐条核对（这里会真的 npm pack 到 .compat-cache/）
+node scripts/compatcheck.mjs --fetch 0.2.0-rc.2
 
 # 让自测用**部署里的**真件复核：dsh-tools 的工具 schema 校验器 + dsh-settings 的 volatileForm（推荐，CI 里可不设）
 DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
@@ -285,7 +440,7 @@ DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
 
 拿**本地目录**调试（`dsh plugin add <本目录>`）会在 profile 里建一个 junction；**换回 npm 正式版之前先把它删掉**，
 否则 `pnpm add` 会以 `ERR_PNPM_EPERM` 失败（原因与判据见「安装 → 装不上？…」）。不想反复删就用 tarball 调试：
-`npm pack` → `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.3.0.tgz`。
+`npm pack` → `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.4.0.tgz`。
 
 设计文档见 [`docs/plans/git-bash-terminal-tool-design.md`](../../docs/plans/git-bash-terminal-tool-design.md)（本地文档，不入库），
 本仓库的开发约定、DSH 契约与通用坑见 [AGENTS.md](../../AGENTS.md)。
@@ -301,6 +456,14 @@ DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
   `systemPrompt.section({ name: 'tool:pwsh', order: 1010, text: '' })` 压掉残留提示词。
 - 沙箱升级（`sandbox_permissions` + 审批）按官方契约**逐字**复刻（`src/host/escalation.ts`），
   包括错误文案、严格更宽顺序与 fail-closed 语义。
+- **超时 / 后台两条路径**（`src/host/bash-tool.ts`）按官方 0.2.x 复刻：
+  `ctx.jobs.start({ kind, label, owner: <agent id>, output: [拉取源…], run })`；
+  有 `wait/read/kill/remove` 时前台「等满即转后台」（`promoted`），没有就退回「超时即杀」。
+  两条**静默失效**的纪律写在源码注释里：`owner` 必须是 id 字符串、`output` 拉取源必须给
+  （少给的表现是任务照常跑完但 `job_output` 永远为空）。
+- **PATH 组装**（`bashPathEntries` / `composePath`）按「Git 安装根 → 真实存在的子环境目录」推导：
+  `bin` 上一层、`usr/bin` 上两层；`ucrt64` / `mingw64` / `clang64` 按存在性探测；
+  与环境 PATH 按归一化键去重。
 - 包名/目录已改名为 `dsh-tweaks-git-bash-terminal-tool`（体现 Git Bash）。**设置 namespace 现在是
   entry id `git-bash-terminal-tool`**（0.1.7 的设置面按 entry id 定位，见「升级到 0.2.0」）；
   locale 命名空间与设置行 slot id 仍叫 `terminal-tool`（纯实现标识，不参与设置寻址）。

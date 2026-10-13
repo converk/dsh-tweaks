@@ -15,7 +15,7 @@
  * 而不是源码常量（这样顺带验证了 bundle 可加载）。
  */
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -26,6 +26,8 @@ const cacheRoot = join(here, '.compat-cache')
 
 let passed = 0
 let failed = 0
+/** 缺失时插件有降级路径的契约（只告警，不计入 failed）。 */
+let optional = 0
 
 /** 一个断言。 */
 function check(name, condition, detail) {
@@ -106,6 +108,33 @@ const CONTRACTS = [
     ext: ['.js'],
     needles: ['async confine('],
   },
+  {
+    // —— 后台任务的**输出通道** ——
+    // ⚠️ 注册表只认 `start({ output: [...] })` 的拉取源：它按源把 stdout/stderr 泵进任务的
+    // 输出环，`job_output` 读的就是那个环。少给、或换成别的写法（例如在 hooks 上返回
+    // `readOutput()`），**都不报错**：任务照常跑完、状态也对，但输出永远是空的。
+    id: 'dsh-jobs-local：start 的输出拉取源（output）与环泵',
+    pkg: 'dsh-jobs-local',
+    ext: ['.js'],
+    needles: ['startPump(spec.output.map', 'outputLimitBytes', 'spec.run(handle)'],
+  },
+  {
+    // 归属：owner 必须是 **agent id（session id）字符串**，注册表拿它反查活着的 agent。
+    // 传 agent 对象会抛 `session "[object Object]" has no live agent`。
+    id: 'dsh-jobs-local：owner 解析（owner 必须是 agent id，不是 agent 对象）',
+    pkg: 'dsh-jobs-local',
+    ext: ['.js'],
+    needles: ['resolveOwner(session)', 'agents.get(session)'],
+  },
+  {
+    // 可选的 promote 能力：前台等超时后「转后台」需要 wait/read/kill/remove（0.2.x 才齐）。
+    // 缺任何一个插件都会**自动降级**为「超时即杀」，所以这里只告警、不算失败。
+    id: 'dsh-jobs：wait/read/kill/remove（前台超时转后台；缺则自动降级）',
+    pkg: 'dsh-jobs',
+    ext: ['.d.ts'],
+    optional: true,
+    needles: ['wait(', 'read(', 'kill(', 'remove('],
+  },
 ]
 
 /** 解析一个安装目录里某个包的目录。 */
@@ -146,7 +175,17 @@ function checkTarget(label, root) {
       continue
     }
     const missing = contract.needles.filter((needle) => !text.includes(needle))
-    check(contract.id, missing.length === 0, missing.map((m) => '缺 "' + m + '"').join('; '))
+    if (missing.length === 0) {
+      check(contract.id, true)
+    } else if (contract.optional === true) {
+      // 可选契约：缺失时插件有明确的降级路径，所以只告警（否则 0.1.7 这种老部署会整片红）。
+      optional += 1
+      console.log(
+        '  warn ' + contract.id + ' — ' + missing.map((m) => '缺 "' + m + '"').join('; ') + '（可选：插件会自动降级）',
+      )
+    } else {
+      check(contract.id, false, missing.map((m) => '缺 "' + m + '"').join('; '))
+    }
   }
 
   // 最关键的一条：插件订阅的事件名必须真的在官方事件表里。
@@ -177,8 +216,15 @@ function fetchVersion(version) {
     })
     const tgz = readdirSync(dir).find((name) => name.endsWith('.tgz'))
     if (tgz === undefined) throw new Error('npm pack 没有产出 tarball：' + pkg + '@' + version)
-    execSync('tar -xzf "' + join(dir, tgz) + '" -C "' + dest + '" --strip-components=1')
-    rmSync(join(dir, tgz))
+    // ⚠️ 别把含盘符的绝对路径交给 tar：MSYS / GNU tar 会把 `D:` 当成**远程主机**
+    // （`tar: Cannot connect to D: resolve failed`），Windows 上 --fetch 直接崩。
+    // 先把 tarball 挪进目标目录，再用相对文件名解包即可。
+    renameSync(join(dir, tgz), join(dest, tgz))
+    execSync('tar -xzf "' + tgz + '" --strip-components=1', {
+      cwd: dest,
+      stdio: ['ignore', 'pipe', 'inherit'],
+    })
+    rmSync(join(dest, tgz))
   }
   return dir
 }
@@ -203,5 +249,5 @@ if (argv[0] === '--fetch') {
 
 for (const entry of targets) checkTarget(entry[0], entry[1])
 
-console.log('\n' + passed + ' passed, ' + failed + ' failed')
+console.log('\n' + passed + ' passed, ' + failed + ' failed' + (optional > 0 ? '（另有 ' + optional + ' 条可选契约缺失，已自动降级）' : ''))
 if (failed > 0) process.exitCode = 1
