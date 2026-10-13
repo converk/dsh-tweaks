@@ -125,6 +125,8 @@ export interface ToolDefinitionLike {
 export interface ToolResultLike {
   readonly content: readonly ContentBlockLike[]
   readonly isError: boolean
+  /** 结构化输出值（`output.schema` 那一份）；`presentResult` 靠 `kind` 决定卡片形态。 */
+  readonly value?: unknown
 }
 
 /** 一次工具执行（`ToolRunContext` 的窄化）。 */
@@ -300,26 +302,14 @@ export interface JobOutcomeLike {
   readonly output?: string | undefined
 }
 
-/** 生产方交给 `jobs.start` 的钩子（`JobHooks` 的窄化）。 */
-export interface JobHooksLike {
-  cancel(reason?: string): void
-  readonly done: Promise<JobOutcomeLike>
-  readOutput?(): string
-}
-
-/** `jobs.start` 的入参（`JobStart` 的窄化）。 */
-export interface JobStartLike {
-  readonly kind: string
-  readonly label: string
-  readonly outputLimitBytes?: number | undefined
-  readonly owner?: AgentLike | undefined
-  run(): JobHooksLike
-}
-
-/** `ctx.jobs` 的最小面。 */
-export interface JobRegistryLike {
-  start(spec: JobStartLike): string
-}
+/**
+ * `ctx.jobs` 的投影在**使用点**（`src/host/bash-tool.ts` 的 `BashJobsLike` / `BashJobSourceLike`）。
+ *
+ * ⚠️ 这里曾经有一份 `JobHooksLike` / `JobStartLike` 的旧投影，带着一个
+ * `readOutput?(): string` 的钩子成员——那正是「后台任务读不到输出」的根源：注册表只认
+ * `start({ output: [...] })` 的拉取源，**没有** `readOutput` 这种东西。留着它只会让人照抄，
+ * 所以整块删掉了（`JobOutcomeLike` 仍然有用，留着）。
+ */
 
 // ---------------------------------------------------------------------------
 // shellEnv / approval

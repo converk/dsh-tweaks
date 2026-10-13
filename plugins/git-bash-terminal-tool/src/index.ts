@@ -36,11 +36,23 @@ export { discoverBash, isBlockedBash, validateBashPath } from './host/discover.j
 export {
   createBashTool,
   renderResult,
-  renderProcessRead,
+  renderPromoted,
+  renderJobRead,
+  ringDelta,
+  sandboxNotes,
+  processOutcome,
   parseExitStatus,
   parseBashArgs,
   composePath,
+  composeEnv,
+  ENV_OVERRIDES,
+  WINDOWS_ENV_DEFAULTS,
+  bashPathEntries,
+  bashInstallRoot,
+  pathKey,
   bashOutputSchema,
+  bashParameters,
+  bashDescription,
 } from './host/bash-tool.js'
 export {
   ESCALATION_TARGETS,
@@ -51,6 +63,7 @@ export {
   escalationHintMarker,
 } from './host/escalation.js'
 export { AGENT_INIT_EVENT, probeCapability, replaceTerminalTool } from './host/replace.js'
+export { diagFile } from './host/diag.js'
 
 /**
  * 能力探测（对应 `../shared/protocol.ts` 的 `CapabilityView`）。

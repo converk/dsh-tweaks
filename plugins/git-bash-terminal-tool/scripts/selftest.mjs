@@ -18,16 +18,20 @@
  * 且能避免测试源码被反斜杠转义问题干扰。
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
   AGENT_INIT_EVENT,
   apply,
   approveEscalation,
+  bashInstallRoot,
   bashOutputSchema,
+  bashPathEntries,
+  composeEnv,
   composePath,
   createBashTool,
+  diagFile,
   discoverBash,
   escalationHintMarker,
   isBlockedBash,
@@ -35,8 +39,11 @@ import {
   parseExitStatus,
   probeCapability,
   probeDeploymentCapability,
-  renderProcessRead,
+  processOutcome,
+  renderJobRead,
+  renderPromoted,
   renderResult,
+  ringDelta,
   readSettings,
   replaceTerminalTool,
   resolveSettings,
@@ -48,6 +55,31 @@ import {
   ESCALATION_TARGETS,
   WIDER_MODES,
 } from '../lib/index.js'
+
+// ---------------------------------------------------------------------------
+// 测试隔离：诊断日志必须写到自己的临时文件
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 本自测**故意**调用真 `apply()`（为了抓 issue #1 那种「事件名写错就静默失效」的回归），
+// 而 `apply()` 会写诊断日志。不隔离的话，它会往**生产日志**里灌一堆测试记录：
+//
+//   settings: dialect=bash bashPath="C:/Program Files/nodejs/node.exe" candidates=0
+//   replace: applied agent=session-1 bash=C:/Program Files/nodejs/node.exe
+//
+// 排查「替换为什么没生效」时读到这些，会以为另有一个跑歪的 DSH 实例 —— 实测就把人
+// 误导过一次（追了十几步一个根本不存在的幽灵实例）。所以第一件事是把出口改到临时文件。
+const DIAG_SINK = join(mkdtempSync(join(tmpdir(), 'dsh-git-bash-diag-')), 'diag.log')
+process.env.DSH_GIT_BASH_DIAG_FILE = DIAG_SINK
+
+/**
+ * 一个真实存在、且**文件名合法**的 bash 替身。
+ *
+ * ⚠️ 这里以前用的是 `process.execPath`（即 nodejs/node.exe，写成 POSIX 风格）—— 那是**错**的示范：
+ * 它之所以能通过校验，恰恰是因为校验当时只判「存在 + 不是 WSL」，于是任何 exe 都被
+ * 当成 bash 接受。校验加上文件名判据后，替身也必须叫 `bash.exe`。
+ */
+const STUB_BASH = join(mkdtempSync(join(tmpdir(), 'dsh-git-bash-stub-')), 'bash.exe')
+writeFileSync(STUB_BASH, '')
 
 let passed = 0
 let failed = 0
@@ -191,6 +223,21 @@ section('发现算法：路径校验')
   check('WSL 路径被拒', (validateBashPath('C:/Windows/System32/bash.exe', probes) ?? '').includes('WSL'))
   check('不存在的路径被拒', (validateBashPath('D:/nope/bash.exe', probes) ?? '').includes('找不到'))
   check('存在的路径通过', validateBashPath('D:/good/bash.exe', probes) === null)
+
+  // ⚠️ 回归：以前只判「存在 + 不是 WSL」，于是**任何** exe 都被当成 bash 接受 ——
+  // 自测拿 process.execPath（node.exe）当替身就顺利过关。填错路径的后果是
+  // 「静默注册一个坏掉的 bash 工具」（node.exe -c 是 --check，什么都不执行）。
+  const anyExe = fakeProbes({ existing: ['C:/Program Files/nodejs/node.exe'], env: { SystemRoot: 'C:/Windows' } })
+  check(
+    '不是 bash 的可执行文件被拒（node.exe）',
+    (validateBashPath('C:/Program Files/nodejs/node.exe', anyExe) ?? '').includes('不是 bash'),
+    String(validateBashPath('C:/Program Files/nodejs/node.exe', anyExe)),
+  )
+  check(
+    '真实存在且名为 bash.exe 的替身通过（自测用的替身）',
+    validateBashPath(STUB_BASH) === null,
+    String(validateBashPath(STUB_BASH)),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -520,7 +567,15 @@ function fakeAgent(options = {}) {
 /** 一个只有可选服务读取能力的宿主 ctx（替换逻辑只用 `get`）。 */
 const HOST = { get: () => undefined, on() {}, effect() {} }
 
-const GIT_BASH = 'D:/env/msys2/usr/bin/bash.exe'
+/**
+ * 本机可用的 Git Bash（发现算法跑一次，替换断言与真机端到端共用）。
+ *
+ * ⚠️ 这里曾经写死成作者机器上的 `D:/env/msys2/usr/bin/bash.exe`：换一台机器整段就崩
+ * （`validateSettings` 报「找不到文件」→ 后续 `calls.register[0]` 是 undefined 直接抛）。
+ * 现在走与「真机端到端」同一套发现算法，找不到就把依赖真实路径的断言整段 skip。
+ */
+const DISCOVERED_BASH = discoverBash({}).find((candidate) => candidate.valid)
+const GIT_BASH = DISCOVERED_BASH?.path ?? null
 
 /** 宿主侧的假 ctx（替换逻辑只用 `get` 读全局服务）。 */
 function fakeHost(services = {}) {
@@ -544,6 +599,10 @@ section('替换：能力探测')
 if (process.platform !== 'win32') {
   section('替换：Windows-only 行为')
   console.log('  skip 非 win32：replaceTerminalTool 的首个判定是平台')
+} else {
+if (GIT_BASH === null) {
+  section('替换：成功路径的四个动作')
+  console.log('  skip 本机没有可用的 Git Bash：构造不出「路径合法」的替换场景')
 } else {
 section('替换：成功路径的四个动作')
 {
@@ -570,6 +629,7 @@ section('替换：成功路径的四个动作')
   check('所有 disposer 都登记到了 agent.ctx.effect', calls.effects.length === 4, String(calls.effects.length))
   check('注册的工具带 output.schema', typeof calls.register[0].output.render === 'function')
 }
+}
 
 section('替换：跳过分支')
 {
@@ -578,6 +638,9 @@ section('替换：跳过分支')
   const noPath = replaceTerminalTool(fakeHost(), fakeAgent({ services: {} }).agent, { dialect: 'bash', bashPath: '' })
   check('bashPath 为空时跳过', noPath.applied === false && noPath.reason.includes('bashPath'), noPath.reason)
 
+  if (GIT_BASH === null) {
+    console.log('  skip 本机没有可用的 Git Bash：跳过依赖真实路径的两条')
+  } else {
   const services = { subprocess: { spawn() {} } }
   const hidden = fakeAgent({ restrictThrows: true, services })
   const subAgent = replaceTerminalTool(fakeHost(services), hidden.agent, { dialect: 'bash', bashPath: GIT_BASH })
@@ -593,6 +656,7 @@ section('替换：跳过分支')
     bashPath: GIT_BASH,
   })
   check('缺 ctx.subprocess 时跳过', missing.applied === false && missing.reason.includes('subprocess'), missing.reason)
+  }
 }
 }
 
@@ -622,7 +686,7 @@ section('替换：挂在 DSH 真的会派发的事件上（issue #1 回归）')
   /** volatile 字段的稳定引用（与 Loader 交给 apply 的形状同形）。 */
   const vol = (value) => ({ get: () => value })
   // bashPath 用真实存在的文件（validateSettings 会查），node.exe 既存在也不是 WSL。
-  apply(ctx, { dialect: vol('bash'), bashPath: vol(process.execPath), bashCandidates: vol([]) })
+  apply(ctx, { dialect: vol('bash'), bashPath: vol(STUB_BASH), bashCandidates: vol([]) })
 
   check('apply 只订阅一个事件', registered.length === 1, String(registered.length))
   check('订阅的是 agent/created', registered[0]?.name === 'agent/created', registered[0]?.name)
@@ -907,11 +971,23 @@ const OFFICIAL_OUTPUT_SNAPSHOT = {
       type: 'object',
       additionalProperties: false,
       properties: {
+        kind: { type: 'string', const: 'promoted' },
+        jobId: { type: 'string' },
+        timeoutMs: { type: 'number' },
+        output: { type: 'string' },
+      },
+      required: ['kind', 'jobId', 'timeoutMs', 'output'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
         kind: { type: 'string', const: 'foreground' },
         exitCode: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
         signal: { oneOf: [{ type: 'string' }, { type: 'null' }] },
         timedOut: { type: 'boolean' },
         aborted: { type: 'boolean' },
+        stopped: { type: 'string' },
         timeoutMs: { type: 'number' },
         stdout: {
           type: 'object',
@@ -1111,19 +1187,34 @@ section('工具：parameters / output.schema 形状（对齐官方编译结果�
     stderr: { text: '', truncated: false },
   }
   const values = [
-    ['foreground', foregroundValue],
+    ['foreground', foregroundValue, true],
     [
       'foreground+denied',
       { ...foregroundValue, exitCode: 1, sandbox: { mode: 'read-only', denied: true, enforcement: 'partial' } },
+      true,
     ],
-    ['background', { kind: 'background', jobId: 'bash-1' }],
+    // 官方 0.2.x 新增：被 job_kill 停过的运行带 stopped。
+    ['foreground+stopped', { ...foregroundValue, exitCode: 1, stopped: 'session archived' }, true],
+    ['background', { kind: 'background', jobId: 'bash-1' }, true],
+    // 官方 0.2.x 新增的第三分支：前台等超时后转后台。
+    ['promoted', { kind: 'promoted', jobId: 'bash-1', timeoutMs: 1000, output: 'partial\n' }, true],
+    // additionalProperties: false —— 多带字段必须被拒，否则 UI 会拿到没约定的形状。
+    ['promoted+多余字段', { kind: 'promoted', jobId: 'bash-1', timeoutMs: 1000, output: '', extra: 1 }, false],
   ]
-  for (const [name, value] of values) {
+  for (const [name, value, shouldPass] of values) {
     const violations = validateValue(bashOutputSchema(), value)
-    check(name + ' 值符合 output.schema（移植版）', violations.length === 0, violations.join(' | '))
+    check(
+      name + ' 值' + (shouldPass ? '符合' : '被拒于') + ' output.schema（移植版）',
+      shouldPass ? violations.length === 0 : violations.length > 0,
+      violations.join(' | '),
+    )
     if (realValidator !== undefined) {
       const realViolations = realValidator.validateJsonSchemaValue(bashOutputSchema(), value)
-      check(name + ' 值通过真实值校验', realViolations.length === 0, realViolations.join(' | '))
+      check(
+        name + ' 值' + (shouldPass ? '通过' : '被拒于') + '真实值校验',
+        shouldPass ? realViolations.length === 0 : realViolations.length > 0,
+        realViolations.join(' | '),
+      )
     }
   }
 }
@@ -1211,18 +1302,72 @@ section('工具：渲染与解析')
   )
   check('parseExitStatus 默认 0', JSON.stringify(parseExitStatus('out')) === JSON.stringify({ body: 'out', exitCode: 0 }))
 
+  // PATH 组装：这里曾经有一个**真实 bug** —— `bashPathEntries` 一律用 `..\..` 推安装根，
+  // 于是 `…\Git\bin\bash.exe` 被推成 `C:\Program Files`，每条命令的 PATH 里都会多出
+  // `C:\Program Files\bin` / `…\usr\bin` / `…\cmd` / `…\mingw64\bin` 这些**不存在**的目录
+  // （真机实测：PATH 前 8 条里 4 条是 MISS），而真正有用的 `…\Git\usr\bin` 反倒没被补上。
   check(
-    'renderProcessRead 的 lossy 提示',
-    renderProcessRead({ delta: 'x', lossy: true, stdoutSpillPath: 'a', stderrSpillPath: 'b' }).includes(
-      '[some output was dropped from memory; full output: a, b]',
-    ),
+    'bashInstallRoot：<root>/bin/bash.exe 反推 <root>',
+    win(bashInstallRoot('D:/env/Git/bin/bash.exe')) === win('D:/env/Git'),
+    bashInstallRoot('D:/env/Git/bin/bash.exe'),
   )
-  const composed = composePath('D:/env/msys2/usr/bin/bash.exe', 'C:/Windows')
   check(
-    'composePath 前置 Git 目录',
-    win(composed.split(';')[0]) === win('D:/env/msys2/usr/bin') && composed.endsWith('C:/Windows'),
+    'bashInstallRoot：<root>/usr/bin/bash.exe 反推 <root>',
+    win(bashInstallRoot('D:/env/Git/usr/bin/bash.exe')) === win('D:/env/Git'),
+    bashInstallRoot('D:/env/Git/usr/bin/bash.exe'),
+  )
+  // 只收真实存在的目录；假装只有 usr/bin、ucrt64/bin、cmd 存在（UCRT64 版 Git for Windows）。
+  const present = new Set([win('D:/env/Git/usr/bin'), win('D:/env/Git/ucrt64/bin'), win('D:/env/Git/cmd')])
+  const entries = bashPathEntries('D:/env/Git/bin/bash.exe', (p) => present.has(win(p)))
+  check(
+    'bashPathEntries 只收录真实存在的目录',
+    entries.length > 0 && entries.every((entry) => present.has(win(entry))),
+    entries.join(' | '),
+  )
+  check(
+    'bashPathEntries 不越出安装根（回归：曾经的 C:\\Program Files\\… 垃圾条目）',
+    entries.every((entry) => win(entry).startsWith(win('D:/env/Git'))),
+    entries.join(' | '),
+  )
+  check(
+    'bashPathEntries 认 ucrt64（不是只认 mingw64）',
+    entries.some((entry) => win(entry) === win('D:/env/Git/ucrt64/bin')),
+    entries.join(' | '),
+  )
+  const composed = composePath('D:/env/Git/bin/bash.exe', 'C:/Windows;D:/env/Git/cmd', (p) => present.has(win(p)))
+  const composedParts = composed.split(';').map((p) => win(p))
+  check(
+    'composePath 前置 Git 目录且保留环境 PATH',
+    composedParts[0] === win('D:/env/Git/usr/bin') && composedParts.at(-1) === win('C:/Windows'),
     composed,
   )
+  check(
+    'composePath 与环境 PATH 去重（同一目录不出现两次）',
+    composedParts.filter((part) => part === win('D:/env/Git/cmd')).length === 1,
+    composed,
+  )
+
+  // 环境注入：官方那 4 个 ENV_OVERRIDES + Windows 专属默认（Python stdio 编码）。
+  // ⚠️ 真机可复现：原生程序按 ANSI 代码页（中文机器 936）写管道，DSH 按 UTF-8 解码 →
+  // `cmd /c ver` / `python -c "print('中文')"` 读回来是乱码。cmd 改不了，Python 能改。
+  const envRuntime = { bashPath: 'D:/env/Git/bin/bash.exe', subprocess: { spawn() {} } }
+  const injected = composeEnv(envRuntime, { callId: 'c-env', signal: new AbortController().signal })
+  check('注入 NO_COLOR / TERM / PAGER / GIT_PAGER', injected.TERM === 'dumb' && injected.NO_COLOR === '1' && injected.PAGER === 'cat' && injected.GIT_PAGER === 'cat')
+  check('注入受管 PATH', typeof injected.PATH === 'string' && injected.PATH.includes('Git'), String(injected.PATH).slice(0, 80))
+  if (process.platform === 'win32') {
+    check(
+      'Windows 上默认注入 PYTHONIOENCODING=utf-8（Python 输出中文不再是乱码）',
+      process.env.PYTHONIOENCODING !== undefined || injected.PYTHONIOENCODING === 'utf-8',
+      String(injected.PYTHONIOENCODING),
+    )
+    // 不覆盖用户自己的设置：进程环境里已有该变量时就不注入。
+    const saved = process.env.PYTHONIOENCODING
+    process.env.PYTHONIOENCODING = 'gbk'
+    const kept = composeEnv(envRuntime, { callId: 'c-env2', signal: new AbortController().signal })
+    if (saved === undefined) delete process.env.PYTHONIOENCODING
+    else process.env.PYTHONIOENCODING = saved
+    check('不覆盖用户已设的 PYTHONIOENCODING', kept.PYTHONIOENCODING === undefined, String(kept.PYTHONIOENCODING))
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1338,12 +1483,12 @@ section('工具：后台任务钩子')
 {
   const batches = []
   const tool = createBashTool({
-    bashPath: 'D:/env/msys2/usr/bin/bash.exe',
+    bashPath: 'D:/env/Git/bin/bash.exe',
     subprocess: {
       spawn() {
         return {
           collected: {
-            stdout: { readFrom: () => ({ text: 'bg-hello\n', nextOffset: 10, lossy: false }) },
+            stdout: { readFrom: (from) => ({ text: from === 0 ? 'bg-hello\n' : '', nextOffset: 10, lossy: false }) },
             stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
           },
           done: Promise.resolve({ exitCode: 0, signal: null }),
@@ -1353,22 +1498,107 @@ section('工具：后台任务钩子')
     },
     jobs: {
       start(spec) {
-        batches.push({ kind: spec.kind, label: spec.label, hooks: spec.run() })
+        batches.push({ kind: spec.kind, label: spec.label, owner: spec.owner, output: spec.output, hooks: spec.run() })
         return 'bash-1'
       },
     },
   })
   const value = await tool.execute(
     { command: 'echo bg-hello', description: 'background', run_in_background: true },
-    { callId: 'call-bg', signal: new AbortController().signal },
+    {
+      callId: 'call-bg',
+      signal: new AbortController().signal,
+      agent: { id: 'session-42', session: { header: { cwd: 'D:/work' } } },
+    },
   )
   check('返回 background 值', value.kind === 'background' && value.jobId === 'bash-1', JSON.stringify(value))
   check('job kind 是 bash（官方注册过的 kind）', batches[0]?.kind === 'bash', batches[0]?.kind)
   check('job label 是命令本身', batches[0]?.label === 'echo bg-hello', batches[0]?.label)
-  check('后台钩子给了 readOutput', typeof batches[0]?.hooks.readOutput === 'function')
+  // ⚠️ owner 必须是 **agent id 字符串**：注册表拿它 `agents.get()` 反查活着的 agent
+  // （`dsh-jobs-local` 的 `resolveOwner`）。传 agent 对象会直接抛
+  // `session "[object Object]" has no live agent` —— 真机上这么写过，任务根本起不来。
+  check(
+    'owner 是 agent id 字符串（不是 agent 对象）',
+    batches[0]?.owner === 'session-42',
+    JSON.stringify(batches[0]?.owner),
+  )
+  // ⚠️ 这是「后台任务读不到任何输出」的回归防线：注册表**只认** `output` 拉取源，
+  // 它按源把两路流泵进任务输出环，`job_output` 读的就是那个环。早先的写法是在 hooks 上
+  // 返回 `readOutput()` —— `dsh-jobs-local` 里根本没有这个成员，于是任务照常跑完、
+  // 状态也对，但 `job_output` **永远是空的**。
+  const sources = batches[0]?.output ?? []
+  check(
+    '给了 stdout/stderr 两个输出拉取源',
+    sources.length === 2 && sources[0].channel === 'stdout' && sources[1].channel === 'stderr',
+    JSON.stringify(sources.map((source) => source.channel)),
+  )
+  check(
+    'output 源能读出增量（job_output 回归防线）',
+    sources[0]?.read(0).text === 'bg-hello\n',
+    JSON.stringify(sources[0]?.read(0)),
+  )
+  check(
+    'run() 同步交回 hooks（cancel + done）',
+    typeof batches[0]?.hooks.cancel === 'function' && typeof batches[0]?.hooks.done?.then === 'function',
+  )
   const outcome = await batches[0].hooks.done
   check('终态映射为 completed + exit code', outcome.status === 'completed' && outcome.detail === 'exit code: 0', JSON.stringify(outcome))
-  check('readOutput 给出增量文本', batches[0].hooks.readOutput() === 'bg-hello\n', JSON.stringify(batches[0].hooks.readOutput()))
+
+  // ⚠️ 被我们停掉的任务必须报 **killed**，而不是「completed, exit code: 1」。
+  // Windows 上终止进程只体现为**退出码**（taskkill / Job Object 都是 exit code 1），
+  // `signal` 恒为 `null` —— 只按 signal 判定的话 killed 分支在 win32 上**永远走不到**，
+  // 一个被 job_kill 停掉的任务会显示成「命令自己失败了」。
+  {
+    let settle
+    let killedHooks
+    const killedTool = createBashTool({
+      bashPath: 'D:/env/Git/bin/bash.exe',
+      subprocess: {
+        spawn() {
+          return {
+            collected: {
+              stdout: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+              stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+            },
+            // 模拟 Windows：terminate 之后拿到的是 exitCode 1 + signal null。
+            done: new Promise((resolve) => {
+              settle = resolve
+            }),
+            terminate: () => settle({ exitCode: 1, signal: null }),
+          }
+        },
+      },
+      jobs: {
+        start(spec) {
+          killedHooks = spec.run()
+          return 'bash-kill'
+        },
+      },
+    })
+    await killedTool.execute(
+      { command: 'sleep 999', description: 'long', run_in_background: true },
+      {
+        callId: 'call-kill',
+        signal: new AbortController().signal,
+        agent: { id: 'session-9', session: { header: { cwd: 'D:/work' } } },
+      },
+    )
+    killedHooks.cancel('user stopped it')
+    const killedOutcome = await killedHooks.done
+    check(
+      '被停掉的任务报 killed（不是 completed, exit code 1）',
+      killedOutcome.status === 'killed' && killedOutcome.detail === 'killed before exit',
+      JSON.stringify(killedOutcome),
+    )
+    // ⚠️ 回归：`detail` **不能**再带停掉的原因。注册表（dsh-jobs-local）在 status === 'killed'
+    // 时会自己把 `job.killReason` 追加到 detail 后面，我们再带一次就会渲染成「原因; 原因」
+    // （真机实测：`[status: killed, verify-after-restart; verify-after-restart]`）。
+    check(
+      'killed 的 detail 不带原因（原因由注册表追加，避免重复）',
+      !String(killedOutcome.detail).includes('user stopped it'),
+      String(killedOutcome.detail),
+    )
+  }
 
   const noJobs = createBashTool({ bashPath: 'D:/b/bash.exe', subprocess: { spawn: () => undefined } })
   try {
@@ -1393,6 +1623,7 @@ section('工具：后台 + 受限（confine 必须先 await，再进同步的 ru
   // 写回同步版的话这里 spawn 到的 argv 就是 undefined（真机报 "undefined is not iterable"）。
   const spawned = []
   let hooks
+  let outputSources
   const tool = createBashTool(
     confinedRuntime({
       subprocess: {
@@ -1411,6 +1642,7 @@ section('工具：后台 + 受限（confine 必须先 await，再进同步的 ru
       jobs: {
         start(spec) {
           hooks = spec.run()
+          outputSources = spec.output
           return 'bash-bg-1'
         },
       },
@@ -1430,14 +1662,172 @@ section('工具：后台 + 受限（confine 必须先 await，再进同步的 ru
     spawned.length === 1 && Array.isArray(spawned[0]) && spawned[0][0] === 'D:/fake-runner.exe',
     JSON.stringify(spawned[0] ?? null),
   )
-  check('run() 仍同步交回 hooks', typeof hooks?.readOutput === 'function')
+  check('run() 仍同步交回 hooks', typeof hooks?.cancel === 'function' && typeof hooks?.done?.then === 'function')
   const outcome = await hooks.done
   check(
     '后台终态仍走官方 JobOutcome 形状',
     outcome.status === 'completed' && outcome.detail === 'exit code: 0',
     JSON.stringify(outcome),
   )
-  check('readOutput 是字符串（沙箱事实在渲染里）', typeof hooks.readOutput() === 'string')
+  check('后台也给两路输出拉取源', Array.isArray(outputSources) && outputSources.length === 2)
+}
+
+// ---------------------------------------------------------------------------
+// 7b. 「前台超时 → 转后台」（官方 0.2.x 的 promote）
+// ---------------------------------------------------------------------------
+
+section('工具：前台超时转后台 / 能力探测（promote）')
+{
+  /**
+   * 假注册表：`settle` 控制进程何时结束；`waitStatus` 控制 `wait()` 的返回。
+   * 四个方法齐 ⇒ 插件应判定为「能 promote」。
+   */
+  const makeRuntime = ({ settle, waitStatus = 'running' }) => {
+    const calls = { wait: [], read: [], kill: [], remove: [], terminated: 0 }
+    let hooks
+    const runtime = {
+      bashPath: 'D:/env/Git/bin/bash.exe',
+      subprocess: {
+        spawn() {
+          return {
+            collected: {
+              stdout: { readFrom: () => ({ text: 'partial\n', nextOffset: 8, lossy: false }) },
+              stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+            },
+            done: settle,
+            terminate: () => {
+              calls.terminated += 1
+            },
+          }
+        },
+      },
+      jobs: {
+        start(spec) {
+          hooks = spec.run()
+          return 'bash-9'
+        },
+        async wait(id, timeoutMs, owner) {
+          calls.wait.push({ id, timeoutMs, owner })
+          return { status: waitStatus }
+        },
+        read(id, owner) {
+          calls.read.push({ id, owner })
+          return {
+            chunks: [
+              { channel: 'stdout', text: 'partial\n' },
+              { channel: 'stderr', text: 'warn\n' },
+            ],
+            lossy: false,
+            job: { output: { spillPaths: [] } },
+          }
+        },
+        kill(id, owner, reason) {
+          calls.kill.push({ id, owner, reason })
+        },
+        remove(id, owner) {
+          calls.remove.push({ id, owner })
+        },
+      },
+    }
+    return { runtime, calls, hooks: () => hooks }
+  }
+
+  const agent = { id: 'sess-7', session: { header: { cwd: 'D:/work' } } }
+
+  // ① 等满了而进程还在跑 → 转后台（官方 0.2.x 的默认行为，不再杀进程）。
+  {
+    const { runtime, calls } = makeRuntime({ settle: new Promise(() => {}) })
+    const tool = createBashTool(runtime)
+    const value = await tool.execute(
+      { command: 'sleep 999', description: 'long task', timeoutMs: 50 },
+      { callId: 'c-promote', signal: new AbortController().signal, agent },
+    )
+    check('转后台：kind 是 promoted', value.kind === 'promoted' && value.jobId === 'bash-9', JSON.stringify(value))
+    check('转后台：带回已产出的输出', String(value.output).includes('partial') && String(value.output).includes('[stderr]'), value.output)
+    check(
+      '转后台：wait 用的是本轮的 timeoutMs 与 agent id',
+      calls.wait[0]?.timeoutMs === 50 && calls.wait[0]?.owner === 'sess-7',
+      JSON.stringify(calls.wait[0]),
+    )
+    check('转后台：不 remove、不 kill（任务继续跑）', calls.remove.length === 0 && calls.kill.length === 0)
+    check('转后台：文案是官方的 moved to background job', renderPromoted(value).includes('[still running after 50ms; moved to background job bash-9]'))
+    check(
+      'promote 可用时 timeoutMs 措辞是「转后台」',
+      String(tool.parameters.properties.timeoutMs.description).includes('moves to the background as a job'),
+      String(tool.parameters.properties.timeoutMs.description),
+    )
+  }
+
+  // ② 在等待窗口内结算 → 前台值 + remove（任务记录不残留）。
+  {
+    const { runtime, calls } = makeRuntime({ settle: Promise.resolve({ exitCode: 0, signal: null }), waitStatus: 'completed' })
+    const tool = createBashTool(runtime)
+    const value = await tool.execute(
+      { command: 'echo hi', description: 'quick' },
+      { callId: 'c-settled', signal: new AbortController().signal, agent },
+    )
+    check('等到终态：返回 foreground', value.kind === 'foreground' && value.exitCode === 0, JSON.stringify(value))
+    check('等到终态：remove 掉任务记录', calls.remove.length === 1 && calls.remove[0].id === 'bash-9', JSON.stringify(calls.remove))
+  }
+
+  // ③ 能力探测：注册表缺 wait/read/kill/remove 时退回「超时即杀」，措辞也要跟着退。
+  {
+    const legacy = createBashTool({
+      bashPath: 'D:/env/Git/bin/bash.exe',
+      subprocess: { spawn: () => undefined },
+      jobs: { start: () => 'bash-1' },
+    })
+    check(
+      '注册表缺 wait/read/kill/remove → 不 promote（措辞退回「杀掉」）',
+      String(legacy.parameters.properties.timeoutMs.description).includes('kills the command on expiry'),
+      String(legacy.parameters.properties.timeoutMs.description),
+    )
+  }
+
+  // ④ 渲染层：官方 0.2.x 新增的 `stopped` 标记与环读取渲染。
+  check(
+    'renderResult 渲染 stopped 标记',
+    renderResult({
+      kind: 'foreground',
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      stopped: 'session archived',
+      timeoutMs: 100,
+      stdout: { text: 'x', truncated: false },
+      stderr: { text: '', truncated: false },
+    }).includes('[stopped: session archived]'),
+  )
+  check(
+    'ringDelta：stdout 在前、stderr 合成一段',
+    ringDelta([
+      { channel: 'stderr', text: 'e' },
+      { channel: 'stdout', text: 'o' },
+    ]) === 'o\n[stderr]\ne',
+    JSON.stringify(ringDelta([{ channel: 'stderr', text: 'e' }, { channel: 'stdout', text: 'o' }])),
+  )
+  check(
+    'renderJobRead：lossy 时点名 spill 文件',
+    renderJobRead('x', true, ['a', 'b']).includes('[some output was dropped from memory; full output: a, b]'),
+  )
+  check(
+    'processOutcome：沙箱注记拼进 detail',
+    processOutcome({ status: 'completed', exitCode: 0, signal: null, sandbox: { mode: 'workspace-write', denied: true } }).detail.includes(
+      'file access denied',
+    ),
+  )
+}
+
+section('诊断日志：自测写自己的文件，不污染生产日志')
+{
+  // ⚠️ 回归：自测会故意调用真 apply()，而 apply() 写诊断日志。早先两者共用一个文件，
+  // 于是生产日志里混进了 `replace: applied agent=session-1 bash=…/node.exe` 这种
+  // 只可能来自测试的记录，排查时被误读成「另有一个跑歪的 DSH 实例」。
+  check('diagFile 跟随 DSH_GIT_BASH_DIAG_FILE 覆盖', diagFile() === DIAG_SINK, diagFile())
+  const text = existsSync(DIAG_SINK) ? readFileSync(DIAG_SINK, 'utf8') : ''
+  check('本自测的诊断确实落在临时文件里', text.includes('apply: platform='), text.slice(0, 100))
+  check('假 agent（session-1）的替换记录也在临时文件里', text.includes('agent=session-1'), text.slice(0, 100))
 }
 
 // ---------------------------------------------------------------------------
@@ -1478,7 +1868,7 @@ function localSubprocess() {
 
 section('真机：用真的 Git Bash 跑命令')
 {
-  const usable = discoverBash({}).find((candidate) => candidate.valid)
+  const usable = DISCOVERED_BASH
   if (usable === undefined) {
     console.log('  skip 没有找到可用的 Git Bash（候选为空）')
   } else {

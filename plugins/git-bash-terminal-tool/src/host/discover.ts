@@ -18,7 +18,7 @@
  */
 import { lstatSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { delimiter, dirname, join, resolve, sep } from 'node:path'
+import { basename, delimiter, dirname, join, resolve, sep } from 'node:path'
 
 /** 候选项的来源分类（同时是排序优先级）。 */
 export type BashSource = 'saved' | 'git-for-windows' | 'msys2' | 'cygwin' | 'git-path'
@@ -396,6 +396,16 @@ export function discoverBash(options: { saved?: string | undefined; probes?: Dis
 export function validateBashPath(path: string, probes: DiscoveryProbes = defaultProbes()): string | null {
   if (path.trim().length === 0) return 'bashPath 不能为空'
   if (isBlockedBash(path, (name) => probes.env(name))) return '不接受 WSL 的 bash.exe（决策 A：绝不使用 WSL）'
+  // ⚠️ 只判「存在 + 不是 WSL」远远不够：**任何**可执行文件都会被当成 bash 接受。
+  // 真机教训：自测一度拿 `process.execPath`（`…\nodejs\node.exe`）当「存在的路径」替身，
+  // 它就那么顺利通过了校验 —— 也就是说一个填错/写歪的 bashPath 会**静默注册一个坏掉的
+  // bash 工具**（`node.exe -c "echo hi"` 里 `-c` 是 `--check`，什么都不执行，
+  // 模型只看到一片空白），属于 AGENTS.md §3.8 那类「不报错、只是永远不对」。
+  // 这里只看文件名、不做任何 spawn：Git for Windows / MSYS2 / Cygwin 的 bash 一律叫 bash(.exe)。
+  const name = basename(path).toLowerCase()
+  if (name !== 'bash' && name !== 'bash.exe') {
+    return `不是 bash 可执行文件：${path}（文件名应为 bash 或 bash.exe）`
+  }
   if (!existsAsFile(probes, path)) return `找不到文件：${path}`
   return null
 }

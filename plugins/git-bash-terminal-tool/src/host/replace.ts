@@ -214,6 +214,10 @@ function buildRuntime(host: HostContextLike, bashPath: string): BashToolRuntime 
       : undefined
   return {
     bashPath,
+    // 工具内部只把非致命问题交回来（如「任务登记被拒」），由这里统一落到诊断日志。
+    warn: (message: string) => {
+      diag(`tool: ${message}`)
+    },
     subprocess: subprocess as BashToolRuntime['subprocess'],
     ...(sandboxPolicy !== undefined && typeof sandboxPolicy.resolve === 'function'
       ? { sandboxPolicy: sandboxPolicy as NonNullable<BashToolRuntime['sandboxPolicy']> }
