@@ -1018,6 +1018,16 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
       runnerFailed: false,
     }
     let note: string | undefined
+    /**
+     * provider（子进程实现）在 spawn **之后**失败时保留的原始错误。
+     *
+     * ⚠️ 必须留着并在 {@link result} 里抛出去：官方 `dsh-bash-local` 的 `result()` 就是这么做的
+     * （`if (providerFailure !== undefined) throw providerFailure.error`）。吞掉它、返回
+     * `exitCode: null` 的话，`renderResult` 会渲染成 `[exit code: 0]` —— 一个**基础设施失败**
+     * 看起来像命令成功、只是没输出（真机上「不报错、只是永远不对」的那一类）。
+     * 后台/转后台路径仍然靠 `note` 走输出拉取源，模型能从 `job_output` 读到这条说明。
+     */
+    let providerError: unknown
     const done = handle.done.then(
       (outcome) => {
         proc.status = outcome.signal !== null ? 'killed' : 'completed'
@@ -1030,6 +1040,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
       },
       (error: unknown) => {
         proc.status = 'killed'
+        providerError = error
         note = `subprocess failed before reporting an outcome: ${String(error)}`
       },
     )
@@ -1107,6 +1118,10 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
         }
       },
       result: (flags) => {
+        // ⚠️ provider 失败要在**渲染之前**抛回原错误（官方口径）：让这次工具调用直接 isError。
+        // 不抛的话 `exitCode: null` 会被 `renderResult` 渲染成 `[exit code: 0]`，把
+        // 「沙箱 runner / 子进程实现崩了」伪装成「命令成功但没输出」。
+        if (providerError !== undefined) throw providerError
         const stdoutValue = finalOutput(stdout)
         let stderrValue = finalOutput(stderr)
         if (note !== undefined) {

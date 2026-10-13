@@ -113,6 +113,7 @@ C:\Program Files\mingw64\bin ← 不存在（而且 UCRT64 版 Git 用的是 ucr
 | `processOutcome` | 沙箱注记拼进任务的 `detail`（任务列表那一行也看得到拒绝） |
 | 任务登记被拒 | 例如该 owner 的并发任务已达上限时，**降级**为前台硬超时并写一行诊断，而不是让调用失败 |
 | 渲染 | 「转后台」走通用卡片（不给退出码 pill），与官方 `presentBashResult` 一致 |
+| provider 失败 | 子进程实现（沙箱 runner 等）在 spawn 之后崩掉时，**渲染前就把原错误抛回**（工具调用 isError），不再把 `exitCode: null` 渲染成看起来像成功的 `[exit code: 0]` |
 
 **⑤ 自测/兼容闸门**
 
