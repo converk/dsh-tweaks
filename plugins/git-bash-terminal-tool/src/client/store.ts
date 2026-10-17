@@ -224,7 +224,11 @@ export function createRowController(
         if (!active) return
         const platform = store.getState().platform
         store.setState({
-          status: platform.length === 0 ? 'loading' : platform === 'win32' ? 'ready' : 'hidden',
+          // 首次 /state 失败时平台未知；若继续停在 loading，设置行会永久消失（只能重挂载）。
+          // 插件 bundle 本身只在 Windows 上进入启动图，所以这里降级为 ready 并显示错误，
+          // 让用户看到「宿主状态读取失败」，而不是一行空白。
+          status: platform === 'win32' || platform.length === 0 ? 'ready' : 'hidden',
+          supported: false,
           error: messageOf(error),
         })
       })

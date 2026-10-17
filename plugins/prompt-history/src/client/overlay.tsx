@@ -15,10 +15,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
-import type { ChatSnapshotLike, OverlaySlotProps, PromptMessageLike } from './types.js'
-
-/** 保留的最多历史条数（超出丢弃最早的）。 */
-const HISTORY_LIMIT = 200
+import type { ChatSnapshotLike, OverlaySlotProps } from './types.js'
+import { extractHistory } from '../shared/history.js'
 
 /** 浏览状态（ref 内的可变导航游标，避免箭头连按时闭包读到旧值）。 */
 interface NavigationState {
@@ -28,30 +26,6 @@ interface NavigationState {
   backup: string
   /** 一次性标记：下一次 draft 变化由 setDraft 自身造成。 */
   selfWrite: boolean
-}
-
-/** 从会话节点里提取去重后的用户提示词历史（时间正序）。 */
-export function extractHistory(nodes: readonly unknown[]): string[] {
-  const out: string[] = []
-  for (const node of nodes) {
-    if (typeof node !== 'object' || node === null) continue
-    const kind = (node as { kind?: unknown }).kind
-    if (kind !== 'user' && kind !== 'steering') continue
-    const message = node as PromptMessageLike
-    if (!Array.isArray(message.content)) continue
-    let text = ''
-    for (const block of message.content) {
-      if (typeof block === 'object' && block !== null && block.type === 'text' && typeof block.text === 'string') {
-        text += block.text
-      }
-    }
-    text = text.trim()
-    if (text === '') continue
-    const previous = out.length > 0 ? out[out.length - 1] : undefined
-    if (text === previous) continue
-    out.push(text)
-  }
-  return out.length > HISTORY_LIMIT ? out.slice(-HISTORY_LIMIT) : out
 }
 
 /** 浏览中的提示角标样式（浮在 composer 卡片右上角，不可交互）。 */
@@ -123,7 +97,7 @@ export function PromptHistoryOverlay(props: OverlaySlotProps): ReactElement | nu
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
       if (event.isComposing || event.keyCode === 229) return
 
       // 作用域：事件必须来自本组件所驻 composer 卡片内的可编辑元素。

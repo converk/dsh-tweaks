@@ -2,18 +2,18 @@
 
 本文件写**在这个仓库里开发 DSH 插件时的约定与坑**；项目介绍见 [README.md](./README.md)。
 
-**契约基线：DSH 0.2.1**（2026-10 用完整部署全量核对：实测部署 0.2.1-rc.1、npm `next` 0.2.1-rc.2；**最低支持 0.2.0**）。写码前按 §3.9 读真实 d.ts **与客户端产物**核对，**禁止凭记忆猜 Service / Slot / prop / 事件名**；换 DSH 版本后按 §5 重跑兼容检查。
+**契约基线：DSH 0.2.1**（2026-10 用完整部署全量核对：本机 launcher 已自动更新到 0.2.1-rc.2、npm `next` 同为 0.2.1-rc.2（0.2.1-rc.1 也全量核对过）；**最低支持 0.2.0**）。写码前按 §3.9 读真实 d.ts **与客户端产物**核对，**禁止凭记忆猜 Service / Slot / prop / 事件名**；换 DSH 版本后按 §5 重跑兼容检查。
 
 ⚠️ **`<dsh>` 指当前部署**（2026-10 实测；本机已没有桌面 App / npm 全局 CLI 两种旧部署）：
 
 | 部署 | 路径 | 实测版本 | 有 d.ts？ |
 |---|---|---|---|
-| **launcher + 固定安装目录**（当前会话真正跑的就是它，`DSH_PROFILE=web`） | `D:\env\node-global\dsh-stable\node_modules\@deepseek-ai\`；入口是 `D:\env\node-global\dsh-launch.mjs`（启动前按 npm dist-tags 自动更新，`DSH_STABLE_HOME` / `DSH_CHANNEL` / `DSH_SKIP_UPDATE` 可覆盖） | `0.2.1-rc.1` | ✅ `@deepseek-ai/` 下齐全（7931 个 `.d.ts`） |
+| **launcher + 固定安装目录**（当前会话真正跑的就是它，`DSH_PROFILE=web`） | `D:\env\node-global\dsh-stable\node_modules\@deepseek-ai\`；入口是 `D:\env\node-global\dsh-launch.mjs`（启动前按 npm dist-tags 自动更新，`DSH_STABLE_HOME` / `DSH_CHANNEL` / `DSH_SKIP_UPDATE` 可覆盖） | `0.2.1-rc.2` | ✅ `@deepseek-ai/` 下齐全（7466 个 `.d.ts`） |
 | **上游 npm** | dist-tags：`latest=0.2.0-rc.2`、`next=0.2.1-rc.2`；要核对别的版本就按 §5 `compatcheck.mjs --fetch <版本>` 把产物 `npm pack` 到 `.compat-cache/` | — | ✅ 解包后就是完整安装布局 |
 
 - **要读 d.ts** → 用当前完整安装；要核对**别的版本** → 按 §5 用 `compatcheck.mjs --fetch <版本>`。
 - **要核运行时字符串 / DOM 判据 / Slot kind** → 同样读当前安装的 `lib/client.js` / `lib/index.js`（是真目录，普通 `rg` / `sed` 即可）。⚠️ 0.2.1 起 `dsh-api-gateway` 的 client 产物拆成 `lib/client.browser.js` + `lib/client.node.js`（`package.json` 的 `exports["./client"]` 按条件映射），**别写死 `lib/client.js`**；`dsh-client-ui-slots` 也不再随完整安装发布（SlotCore 内联进 `dsh-web-frontend/dist/assets/index-*.js`），见 §3.9。
-- 版本号以 `package.json` 的 `version` 为准；`0.2.1` 是基线口径，实测部署 `0.2.1-rc.1`、上游 `next` 是 `0.2.1-rc.2`（本次核对的两版被审计包逐字节相同）。
+- 版本号以 `package.json` 的 `version` 为准；`0.2.1` 是基线口径，实测部署与上游 `next` 都是 `0.2.1-rc.2`（launcher 启动前自动更新；上一轮核对的 `0.2.1-rc.1` 与本版被审计包逐字节相同）。
 - 若将来又遇到 **asar 打包**的部署（本机 2026-10 已没有）：它没有 d.ts，`ls` / `rg` 也读不到，需按 asar 格式解包，旧配方见 `git log -S app.asar -- AGENTS.md`。
 
 ## 0. 文档同步（强制）
@@ -69,12 +69,12 @@ plugins/<name>/
 
 | 插件 | 状态 | 支持的 DSH 版本 |
 |---|---|---|
-| `prompt-history` | 维护中 | 0.2.0 – 0.2.1，跟随最新 |
-| `model-capabilities` | 维护中 | 同上 |
-| `git-bash-terminal-tool` | 维护中 | 同上；**0.4.1** 起修掉 0.2.1 的设置行只读 |
+| `prompt-history` | 维护中 | 0.2.0 – 0.2.1（**0.1.1**：多段文本换行防御性修复、`Shift+↑/↓` 放行、补纯逻辑自测） |
+| `model-capabilities` | 维护中 | 0.2.0 – 0.2.1（**0.1.1**：删除与官方重复的多模态控件；declared pi-ai 路由按官方 `ModelReasoningEfforts` 运行期探测；只写 `reasoningEfforts`；补 `llm-deepseek` / `llm-deepseek-account` 提供方级面板） |
+| `git-bash-terminal-tool` | 维护中 | 0.2.0 – 0.2.1（**0.5.0**：安装根目录探测 / 文件名校验 / 半注册回滚 / `/state` 失败降级 / 不默认探测版本 / cwd 跟随 `working_directory`；**0.4.1** 已发布，修 0.2.1 的设置行只读） |
 | `turn-file-revert` | **已停止维护（2026-09）** | **只到 0.2.0，不再跟进** |
 
-**最低支持 DSH 0.2.0**（2026-10 起不再考虑 0.1.7）。2026-10 针对 0.2.1 的核对结论：三个维护中插件里只有 `git-bash-terminal-tool` 需要改运行期代码并 bump 到 **0.4.1**（0.2.1 删除了 `ConfigFormSnapshot.mode`，0.4.0 的设置行会整行只读）；`prompt-history` / `model-capabilities` 运行期零改动，只各自补/修了契约 selftest。
+**最低支持 DSH 0.2.0**（0.1.7 已不支持；0.2.1 是契约基线与核对口径）。2026-10 合并 PR #3 后的版本事实：`git-bash-terminal-tool` **0.5.0**（按 0.2.1 契约对齐运行期 + 审计修复）、`model-capabilities` **0.1.1**、`prompt-history` **0.1.1**；三者都继续支持 **0.2.0 – 0.2.1**（各插件增量见上表）。`git-bash-terminal-tool` 的 **0.4.1** 已发布（修 0.2.1 删除 `ConfigFormSnapshot.mode` 导致的设置行只读），0.5.0 已包含该修复。
 
 **`turn-file-revert` 的例外规则（强制）**：该能力官方 DSH 0.2.x **已内置**（回合改动卡片 + 逐文件 diff 复核），所以本仓库从 2026-09 起停止维护。之后的 DSH 升级、契约审计、兼容性核对、CI、发布**一律忽略这个插件**——只保证到 **0.2.0**，在更新的 DSH 上不保证可用也不再修；版本号停在 `0.1.1`（已作为最后一次发布发出）：不要再 bump、不要打 tag / 发布、不要加进任何 profile 的 `dsh.profile.bundles`；源码与 README 保留只作参考（DOM 增补写法仍有教学价值），但**不要「顺手修一下」**，也不要为它改仓库其他部分。唯一例外：它**阻塞**了其他插件或 DSH 本身（如依赖冲突）时才允许最小处置，并在提交信息里写明原因。
 
@@ -111,7 +111,7 @@ plugins/<name>/
 - 注册：`slots.inject(key, () => slots.register({ name, id, order }, (props) => el))`，keyed 席位用 `{ name, key }`；disposer 由注入回调原样交还。`slots` 服务由 `dsh-client-ui-renderer` 提供；注册语义（`SlotCore`）本体 0.2.1 起**不再随完整安装单独发布**（内联进 `dsh-web-frontend/dist` 的页面种子模块），以运行时产物与 slot-catalog 为准。
 - session 作用域 Slot 会注入标准 props（按需判空）：`sessionId`、`useChat`、`useSession`、`useInput`、`inputActions`、`useProjection`…；选择器要返回**引用稳定**的值，否则每次 store 变化都重渲染。
 - 常用席位：`conversation.input.overlay`（composer 卡片内浮层，纯 UI 首选）/ `conversation.input.left|right` / `conversation.input.dock` / `conversation.chat.node`（keyed）/ `conversation.chat.turnTail` / `conversation.chat.assistant-actions` / `settings.models.provider-card`（keyed）/ `settings.general.item` / `settings.section`。
-- ⚠️ **别猜 kind**：整份 Slot 目录（**0.2.1 是 99 个席位**——0.2.0 是 89 条；带 `kind` / `scope` / `occupants` / `replaceRisk` / `declaredBy` / `source`）就在部署里，读法见 §3.9。实测 `chain` 只有三个：`conversation.composer`、`shell.quota-notice`、`sidebar.right.tab.guide`——**其余都不是独木桥**，`list` 席位新 `id` 就能加条目、`keyed` 席位按 `key` 替换。
+- ⚠️ **别猜 kind**：整份 Slot 目录（**0.2.1 是 100 个席位**——0.2.0 是 90 条，均按 `CLIENT_SLOT_API` 条数实测；带 `kind` / `scope` / `occupants` / `replaceRisk` / `declaredBy` / `source`）就在部署里，读法见 §3.9。实测 `chain` 只有三个：`conversation.composer`、`shell.quota-notice`、`sidebar.right.tab.guide`——**其余都不是独木桥**，`list` 席位新 `id` 就能加条目、`keyed` 席位按 `key` 替换。
 - 输入区：composer 是 **contenteditable（Lexical）不是 textarea**，改草稿只能走 `inputActions.setDraft(text)`；键盘拦截配方（document 捕获相 + `[data-composer-card]` 限定作用域 + 避开 IME + 查 `phase === 'plain'` + preventDefault）见 `plugins/prompt-history/src/client/overlay.tsx`。Chat 快照取 `useChat((s) => s.legacy.nodes)`，用户输入是 `kind === 'user' | 'steering'` 节点里的 text 块。
 - ✅ **「本轮文件改动」那一行在 `conversation.chat.turnTail`——它是 `list` 席位，不是 chain**（2026-10 在 `0.2.0-rc.2` 与 `0.2.1-rc.1` 两个部署上核对，两版都是 `list` + `replaceRisk: 'none'`）：官方 `dsh-client-ui-deliverables` 只是**其中一个条目**（`id: '@deepseek-ai/dsh-client-ui-deliverables'`），同席还有 `client-ui-plan PlanCards`、`client-ui-schedule ScheduleTurnCard`。⇒ **想自己加一行，直接 `slots.register({ name: 'conversation.chat.turnTail', id: '<自己的 id>', order }, …)`**——新 `id` 就是新条目，与官方那行并列（复用官方 `id` 才是替换它）。**不要**再为此走 DOM 增补。
 - **DOM 增补只在确实没有席位时用**（写法参考 `plugins/turn-file-revert/src/client/augment.ts`）：在 session 作用域 Slot 注册隐藏锚点拿 `sessionId`，再观察转写区把自有元素插到官方产物行之后。稳定判据（**别用哈希类名**）：`[data-turn-tail="<turn>"]`、`[data-chat-turn]`、`[data-actions-reveal]`（只在 `closing !== null` 分支写，值 `endsWithResponse ? "always" : "hover"` → 可当「回合已收尾、动作条已渲染」的判据）、`[data-changed-files]`（官方改动卡片）、`[data-presented-files-row]`（present 的交付文件行）；⚠️ `[data-produced-files-row]` **不存在于任何官方产物**——选任何 DOM 判据前先在部署里 grep 一遍（读法见 §3.9）。
@@ -125,7 +125,8 @@ plugins/<name>/
 ### 3.6 宿主侧写文件（沙箱）与可观测性
 
 - ⚠️ `ctx.fs.writeText(target, content, expected?, signal?, sandboxPolicy?)` 的**第 5 参必须传**：`dsh-fs-sandbox/lib/index.js` 的签名就是 5 参，且**按位置**透传（`super.writeText(await this.checkedTarget(target, sandboxPolicy), content, expected, signal)`）——少传等于 `checkedTarget(target, undefined)`，退回「无会话」的部署兜底 workspace root，**连会话工作区内的写回都判越界**。（`dsh-fs-local` 的同名方法只有 4 参，别照它写。）
-- 策略口径（与官方 deliverables 相同）：`ctx.sandboxPolicy.resolve({ session })`；workspace root 取 `session.cwd ?? ctx.sandboxPolicy.workspaceRoot`（拿不到 session 时用记录下来的会话 cwd）。
+- 策略口径（与官方 deliverables 相同）：`ctx.sandboxPolicy.resolve({ session })`；workspace root 取 `session.cwd ?? ctx.sandboxPolicy.workspaceRoot`（拿不到 session 时用记录下来的会话 cwd）。⚠️ 这里的 `session.cwd` 就是**不可变的** `session.header.cwd`（原始项目）：模型用 `working_directory` 工具切目录**不会扩大**沙箱授权范围。
+- ⚠️ **命令的 cwd 与沙箱的 workspace root 是两回事**：要跟随会话当前目录，用 `ctx.workingDirectory.ensure(agent, signal)`（**async**，必须 await）拿现有目录——`ctx.workingDirectory` 是 0.2.1 才有的服务（`dsh-working-directory`），最低支持的 0.2.0 上没有 → `ctx.get('workingDirectory')` 判空，缺了退回 `session.header.cwd`（`git-bash-terminal-tool` 0.5.0 的降级路径）。0.2.1 里 `sandboxPolicy.resolve()` 仍按 header cwd 计算 workspace root，别拿它当命令 cwd。
 - ⚠️ `read-only` 模式下 `rm` **不经过沙箱**：插件要自己判掉，否则会绕过只读策略删文件。
 - 宿主是 Node ESM、改代码必须重启，浏览器侧失败只表现为静默，所以关键动作要**留文件日志**（`os.tmpdir()` 下一行一条），排查时直接读文件。参考 `plugins/git-bash-terminal-tool/src/host/diag.ts`。
 
@@ -159,6 +160,8 @@ cordis 的事件名、服务名、Slot 键、DOM 判据全是裸字符串/属性
 | `ctx.sandbox.confine` | **async**，必须 `await` | 拿到 Promise：`argv`/`runnerFailureRules` 全 undefined，真机报 `undefined is not iterable` |
 | `ctx.tools.restrict` | 必须在 **agent scope** 调用；名字未知会**抛错**（插件靠这个判断"pwsh 是否已被隐藏"） | 在根 ctx 调用直接抛；写错名字静默无效 |
 | `ctx.systemPrompt.section` | 同名 section 会 shadow 外层，空文本被丢弃（用它压掉官方提示词） | 压不掉，模型仍看到旧方言 |
+| 会话当前目录（`ctx.workingDirectory`） | `await ctx.workingDirectory.ensure(agent, signal)`（**async**）拿当前目录；`session.header.cwd` 是**不可变**的原始项目（0.2.1 起才有该服务，更低版本判空退回 header cwd） | 拿 header cwd 当命令 cwd：模型 `cd` 后命令还在旧目录跑，终端卡片与 `pwd` 对不上 |
+| `jobs.start` 的调用归属 | `ctx.jobs.start({ …, toolCall: { callId, rootCallId } })`——PTC 子调用的 `callId` 不是根调用，必须同时给 `rootCallId` | 后台任务卡片归错调用 / 会话事件里找不到所属根调用，`job_output` 关联不上 |
 
 - `jobs.start` 的 `run()` 要求**同步**交回 hooks，而 `confine` 是 async → 要在 `jobs.start` **之前**把受限 argv 解析好（官方 `dsh-pwsh-sandbox` 也是「先 await 再 spawn」）。
 - `ctx.jobs.start` 的 `owner` 必须是 **agent id（= session id）字符串**（`dsh-jobs-local` 用它 `agents.get()` 反查活着的 agent；传 agent 对象会抛 `session "[object Object]" has no live agent`）；`job_output` 只读 `start({ output: [拉取源…] })` 泵出的输出环，hooks 上返回 `readOutput()` 不存在——少给 `output` 的表现是任务照常跑完但 `job_output` 永远为空。
@@ -173,14 +176,16 @@ cordis 的事件名、服务名、Slot 键、DOM 判据全是裸字符串/属性
 | client 模块系统（boot wire、`__ModuleLoader__` 协议） | `dsh-client-modules/lib/types/client/manifest.d.ts` |
 | conversation 系列 Slot / InputState / InputActions / ComposerBar | `dsh-client-ui-conversation/lib/types/client/contract/*.d.ts` |
 | Chat 快照 / 键控节点渲染器 / UseChat | `dsh-client-ui-chat/lib/types/client/contract/*.d.ts` |
-| 工具事件（`tools/pre-execute` / `post-execute`）、ToolExecution | `dsh-tools/lib/types/index.d.ts` |
-| 会话事件（`session/event`、`tool/call{turn,callId,name,arguments}`） | `dsh-session/lib/types/*.d.ts` |
+| 工具事件（`tools/pre-execute` / `post-execute`）、`ToolExecution.rootCallId`、`output.presentationMeta` | `dsh-tools/lib/types/index.d.ts` |
+| 会话事件（`session/event`、`tool/call{turn,callId,name,arguments}`、`job/registered` / `job/settled`） | `dsh-session/lib/types/*.d.ts`、`dsh-jobs/lib/types/types.d.ts` |
 | agent 事件（`agent/created` / `pre-step` / `disposed`） | `dsh-agent/lib/types/runtime-types.d.ts` |
+| **会话当前目录**（`workingDirectory.ensure/get/set`、`working-directory/change`；0.2.1 新增） | `dsh-working-directory/lib/types/index.d.ts`、`dsh-tool-working-directory/lib/types/index.d.ts` |
 | 文件服务、沙箱策略、沙箱 provider | `dsh-fs/lib/types/index.d.ts`、`dsh-sandbox-policy/…`、`dsh-sandbox/lib/types/index.d.ts` |
 | **设置面**：entry Config / volatile / 表单投影 | `dsh-settings/lib/types/{index,schema}.d.ts`、`schemastery/lib/types/index.d.ts` |
-| 客户端设置表单（原生 `configForms`） | `dsh-client-ui-settings/lib/types/client/config-form*.d.ts` |
+| 客户端设置表单（原生 `configForms`；`ConfigFormSnapshot` 0.2.1 起无 `mode`） | `dsh-client-ui-settings/lib/types/client/config-form.d.ts`、`config-form-types.d.ts` |
+| 终端卡片（读 `tool/result.meta.cwd`） | `dsh-client-ui-tool/lib/types/client/tool/models/terminal-card-model.d.ts` |
 | 纯 UI 插件模板（空 host apply + dsh.client + overlay） | `dsh-client-ui-input-trigger/{package.json, lib/index.js, lib/client.js}` |
-| **Slot 目录**（0.2.1 有 99 条，带 `kind` / `scope` / `occupants` / `replaceRisk` / `declaredBy` / `source`）、以及 Service / Event / Type 目录 | `dsh-cordis-client-runner/lib/client.js` 的 `api-catalog`（`SERVICE_API` / `EVENT_API` / `TYPE_API`）与 `slot-catalog` 两段——**生成物别手改**；同一份数据也由会话内 Inspect 与 `docs/cordis-catalog` 提供。**查 Slot 的真实 kind 就查这里，别猜**（§3.4） |
+| **Slot 目录**（0.2.1 有 100 条、0.2.0 是 90 条，带 `kind` / `scope` / `occupants` / `replaceRisk` / `declaredBy` / `source`）、以及 Service / Event / Type 目录 | `dsh-cordis-client-runner/lib/client.js` 的 `api-catalog`（`SERVICE_API` / `EVENT_API` / `TYPE_API`）与 `slot-catalog` 两段——**生成物别手改**；同一份数据也由会话内 Inspect 与 `docs/cordis-catalog` 提供。**查 Slot 的真实 kind 就查这里，别猜**（§3.4） |
 
 **d.ts 查不到的东西必须去客户端产物里核**：DOM 判据、服务是否真的被 provide、事件是否真的被派发（`lib/client.js` / `lib/index.js` 里的字符串）——`dsh-client-ui-renderer` / `dsh-client-ui-chat` / `dsh-client-ui-conversation` 等包里都有构建好的 `lib/client.js`，别把它们当纯类型包。这类契约**没有任何类型保护**，写错只会静默失效。
 
@@ -214,6 +219,7 @@ node scripts/clientsmoke.mjs     # 浏览器半区冒烟（有则写）
 
 - 写码前按 §3.9 读真实 d.ts **和客户端产物**核对契约，不要凭记忆猜名字。
 - 改完至少跑 `tsc --noEmit` + `node scripts/selftest.mjs`（有 client 半区再加 clientsmoke，有宿主契约再加 compatcheck）；改契约相关代码时**顺带补一条能抓住本次回归的断言**。
+- **让自测用真件**：`DSH_STABLE_HOME` 指向完整部署（`git-bash-terminal-tool` 的 selftest 用它复核事件契约 / 工具 schema / `volatileForm` 等真件）；没有完整部署时，`DSH_SETTINGS_ENTRY` / `DSH_SCHEMASTERY_ENTRY` 可以直接指到单包产物（terminal selftest 已支持）。文档与脚本里不要写本机不存在的源码路径；CI 上没有部署就跳过官方产物段，**不要为了绿而弱化断言**。
 - **防漂移**：有宿主的插件带 `scripts/compatcheck.mjs`（`node scripts/compatcheck.mjs --fetch <版本> …`；升级核对的矩阵示例：`--fetch 0.2.0-rc.2 0.2.1-rc.1`，需要时再加 `0.2.1-rc.2`），拿官方产物逐条核对事件名 / 方法签名 / 服务形状；自测里**必须**对事件名等裸字符串有断言——裸字符串等于没测。契约分**硬**与**可选**两类：`optional: true` 只用于「低于最低支持版本（0.2.0）的部署」的诊断性告警，**最低支持版本内必须全绿**。`git-bash-terminal-tool` 的 `jobs.wait/read/kill/remove`（超时转后台）自 2026-10 起是**硬契约**（0.2.0 起就齐）；运行期仍保留「缺失则退回超时即杀」的防御性降级，但不再作为支持承诺。
 - 纯 UI 插件同样要有 `scripts/selftest.mjs`：把官方产物原文/结构（Slot 声明、标准 props、locale 签名、运行时 DOM 邻接）钉成断言；**无 DSH 部署时跳过官方产物段**（CI 友好）。参考 `plugins/prompt-history/scripts/selftest.mjs` 与 `plugins/model-capabilities/scripts/selftest.mjs`。官方产物路径按包 `exports` 解析，别写死 `lib/client.js`（0.2.1 的 gateway 已拆 browser/node）。
 - 快速预览交互可用会话内动态 Cordis 插件（`cordis_define` / `cordis_run` / `cordis_undefine`），但落地交付一律以本仓库的 TS 包为准，**两者不要同时挂同一 Slot**。
@@ -227,6 +233,6 @@ node scripts/clientsmoke.mjs     # 浏览器半区冒烟（有则写）
 
 **新增插件还要做**（漏第 2 项 CI 会直接报 `未知插件`）：
 
-1. `plugins/<name>/package.json`：包名 `dsh-tweaks-<name>`、`version`、`prepack: npm run build`（+ `build: node build.mjs`）、`dsh.bundle.patch: ./cordis.patch.yml`、`files` 含 `lib` / `cordis.patch.yml` / `README.md`（照抄现有插件）。
+1. `plugins/<name>/package.json`：包名 `dsh-tweaks-<name>`、`version`、`prepack: npm run build`（+ `build: node build.mjs`）、`dsh.bundle.patch: ./cordis.patch.yml`、`files` 含 `lib` / `cordis.patch.yml` / `README.md` / **`src`**（`types` / `exports.types` 指向 `src/*.ts` 时，`files` 缺 `src` 会让消费方类型悬空；照抄现有插件）。
 2. `publish.yml` **两处**加插件**目录名**：`workflow_dispatch.inputs.plugin.options` 与 `jobs.publish` 里 `case "$plugin" in` 的白名单。
 3. npmjs.com 上给**这个包**配一次 trusted publishing（npm 按包授权，每个包各配一次）：Provider `GitHub Actions` / Repository `converk/dsh-tweaks` / Workflow name `publish.yml` / Environment 留空 / Allowed actions `npm publish`；配好后可删掉旧的 npm token。

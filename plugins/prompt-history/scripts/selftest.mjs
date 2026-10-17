@@ -3,8 +3,10 @@
  *
  * 两部分：
  * 1. 不需要 DSH 部署（CI 也跑这一段）：
- *    - 插件源码契约面：inject 服务名、席位键 / 条目 id、键盘拦截配方、
- *      [data-composer-card] DOM 判据、locale 命名空间；
+ *    - 插件源码契约面：inject 服务名、席位键 / 条目 id、键盘拦截配方（含 Shift 放行）、
+ *      [data-composer-card] DOM 判据、locale 命名空间，以及「提取逻辑只在 shared/history.ts」；
+ *    - 纯逻辑（历史提取）：用 esbuild 把 src/shared/history.ts 现场 bundle 成 ESM data URL
+ *      再 import，覆盖 user / steering 过滤、多块换行、空块语义、相邻去重与上限；
  *    - client bundle 协议：window.__ModuleLoader__.load({ id, factory }) 外壳、
  *      工厂只 require 页面种子模块（react / react/jsx-runtime）、sourcemap trailer 合法；
  *    - 入口行为：在 vm 里执行构建产物，用结构化 stub 驱动 apply，
@@ -24,6 +26,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
+import { build } from 'esbuild'
 
 const CLIENT_BUNDLE = new URL('../lib/client.js', import.meta.url)
 const CLIENT_MAP = new URL('../lib/client.js.map', import.meta.url)
@@ -105,7 +108,10 @@ test('插件源码契约面：键盘拦截配方与 DOM 判据', () => {
   const overlay = pluginFile('src/client/overlay.tsx')
   assert.ok(overlay.includes("closest('[data-composer-card]')"), 'composer 卡片作用域判据')
   assert.ok(overlay.includes("document.addEventListener('keydown', onKeyDown, true)"), 'document 捕获相监听')
-  assert.ok(overlay.includes('event.ctrlKey || event.metaKey || event.altKey'), '避开修饰键')
+  assert.ok(
+    overlay.includes('if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return'),
+    '避开修饰键：必须包含 event.shiftKey（Shift+↑/↓ 放行给编辑器自己的选择行为）',
+  )
   assert.ok(overlay.includes('event.isComposing || event.keyCode === 229'), '避开 IME 组合期')
   assert.ok(overlay.includes('target.isContentEditable'), '只接管 contenteditable')
   assert.ok(overlay.includes('inputActions.setDraft(text)'), '改草稿只能走 setDraft')
@@ -114,9 +120,20 @@ test('插件源码契约面：键盘拦截配方与 DOM 判据', () => {
     '只在空草稿时接管 ↑（不与斜杠 / 引用菜单冲突）',
   )
   assert.ok(overlay.includes('snapshot.legacy.nodes'), '历史来自 useChat 的 legacy.nodes')
-  assert.ok(overlay.includes("kind !== 'user' && kind !== 'steering'"), '只取 user / steering 节点')
   assert.ok(overlay.includes("phase !== 'plain'"), '非 plain 相位不接管')
-  assert.ok(overlay.includes('HISTORY_LIMIT = 200'), '历史上限 200 条')
+})
+
+test('插件源码契约面：提取逻辑在 shared/history.ts，overlay 只消费', () => {
+  const overlay = pluginFile('src/client/overlay.tsx')
+  const history = pluginFile('src/shared/history.ts')
+  assert.ok(
+    overlay.includes("import { extractHistory } from '../shared/history.js'"),
+    'overlay 必须从 shared/history.ts 导入提取逻辑（单一来源）',
+  )
+  assert.ok(overlay.includes('extractHistory(nodes)'), 'overlay 必须实际调用 extractHistory')
+  assert.ok(!overlay.includes('function extractHistory'), '提取逻辑不能内联回 overlay（会与纯逻辑自测脱节）')
+  assert.ok(history.includes("message.kind !== 'user' && message.kind !== 'steering'"), '只取 user / steering 节点')
+  assert.ok(history.includes('export const HISTORY_LIMIT = 200'), '历史上限 200 条')
 })
 
 test('插件源码契约面：locale 命名空间与中英文案键集一致', () => {
@@ -155,9 +172,120 @@ test('包声明与 bundle patch：双面插件 + selftest 脚本', () => {
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(pkg.scripts.selftest, 'node scripts/selftest.mjs')
   assert.equal(pkg.scripts.build, 'node build.mjs')
+  assert.ok(Array.isArray(pkg.files) && pkg.files.includes('src'), 'files 必须含 src（发布的源码投影）')
   const patch = pluginFile('cordis.patch.yml')
   assert.ok(patch.includes('- id: prompt-history'), 'bundle patch 的 entry id')
   assert.ok(patch.includes('name: dsh-tweaks-prompt-history'), 'bundle patch 的包名')
+})
+
+// ---------------------------------------------------------------------------
+// 纯逻辑：历史提取（不需要 DSH 部署：esbuild 现场 bundle shared/history.ts）
+// ---------------------------------------------------------------------------
+
+/**
+ * 把 src/shared/history.ts 现场 bundle 成 ESM data URL 再 import：
+ * 不必为测试单独产出构建文件，也不会把 React / DOM 带进来。
+ */
+async function loadHistoryModule() {
+  const entry = fileURLToPath(new URL('../src/shared/history.ts', import.meta.url))
+  const built = await build({
+    entryPoints: [entry],
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'node',
+    target: 'node22',
+    logLevel: 'silent',
+  })
+  const code = built.outputFiles[0]?.text
+  assert.ok(code !== undefined, 'esbuild 没有产出历史提取模块')
+  return await import('data:text/javascript;base64,' + Buffer.from(code, 'utf8').toString('base64'))
+}
+
+const { extractHistory, HISTORY_LIMIT } = await loadHistoryModule()
+
+test('纯逻辑：只取 user / steering 节点，时间正序', () => {
+  const nodes = [
+    { kind: 'assistant', content: [{ type: 'text', text: 'not me' }] },
+    { kind: 'user', content: [{ type: 'text', text: 'first' }] },
+    { kind: 'steering', content: [{ type: 'text', text: 'interjection' }] },
+    { kind: 'tool', content: [{ type: 'text', text: 'tool output' }] },
+    { kind: 'user', content: [{ type: 'text', text: 'last' }] },
+  ]
+  assert.deepEqual(extractHistory(nodes), ['first', 'interjection', 'last'])
+})
+
+test('纯逻辑：多段 text 块之间用换行连接（不粘连）', () => {
+  const nodes = [
+    {
+      kind: 'user',
+      content: [
+        { type: 'text', text: 'line one' },
+        { type: 'text', text: 'line two' },
+      ],
+    },
+  ]
+  assert.deepEqual(extractHistory(nodes), ['line one\nline two'])
+})
+
+test('纯逻辑：空内容 / 非数组 / 非文本块被跳过', () => {
+  const nodes = [
+    { kind: 'user', content: 'not-an-array' },
+    { kind: 'user', content: [] },
+    { kind: 'user', content: [{ type: 'image', text: 'ignored' }] },
+    { kind: 'user', content: [{ type: 'text', text: 42 }] },
+    { kind: 'user', content: [{ type: 'text' }] },
+    null,
+    'not-an-object',
+    { kind: 'user', content: [{ type: 'text', text: 'kept' }] },
+  ]
+  assert.deepEqual(extractHistory(nodes), ['kept'])
+})
+
+test('纯逻辑：纯空白 text 块不参与换行连接（不产生空行）', () => {
+  const nodes = [
+    {
+      kind: 'user',
+      content: [
+        { type: 'text', text: '  ' },
+        { type: 'text', text: 'a' },
+        { type: 'text', text: '' },
+        { type: 'text', text: '   ' },
+        { type: 'text', text: 'b' },
+        { type: 'text', text: '\n\t' },
+      ],
+    },
+  ]
+  // 未过滤空白块时会得到 'a\n\n   \nb' 这类带空行的结果。
+  assert.deepEqual(extractHistory(nodes), ['a\nb'])
+  // 整条消息只有空白块时不产生历史。
+  assert.deepEqual(extractHistory([{ kind: 'user', content: [{ type: 'text', text: ' \n ' }] }]), [])
+})
+
+test('纯逻辑：相邻重复去重、非相邻保留', () => {
+  const nodes = [
+    { kind: 'user', content: [{ type: 'text', text: '  same  ' }] },
+    { kind: 'user', content: [{ type: 'text', text: 'same' }] },
+    { kind: 'user', content: [{ type: 'text', text: 'same' }] },
+    { kind: 'user', content: [{ type: 'text', text: 'different' }] },
+    { kind: 'user', content: [{ type: 'text', text: 'same' }] },
+  ]
+  assert.deepEqual(extractHistory(nodes), ['same', 'different', 'same'])
+})
+
+test('纯逻辑：超过上限时保留最近 HISTORY_LIMIT 条', () => {
+  const nodes = Array.from({ length: HISTORY_LIMIT + 5 }, (_value, index) => ({
+    kind: 'user',
+    content: [{ type: 'text', text: 'prompt-' + String(index) }],
+  }))
+  const history = extractHistory(nodes)
+  assert.equal(history.length, HISTORY_LIMIT)
+  assert.equal(history[0], 'prompt-5', '应丢弃最早的 5 条')
+  assert.equal(history.at(-1), 'prompt-' + String(HISTORY_LIMIT + 4), '应保留最新一条')
+})
+
+test('纯逻辑：HISTORY_LIMIT = 200（README 与测试共用口径）', () => {
+  assert.equal(HISTORY_LIMIT, 200)
 })
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@
  * 6. 行组件在**非 win32** 与**平台未知**时不渲染（需求 2），win32 时渲染出来；
  * 7. 设置快照契约：0.2.1 的 configForms 快照删除了 `mode`，写权限只由 `writable` 表达
  *    （0.4.0 因 `snapshot.mode === 'host'` 判据在 0.2.1 上整行只读，0.4.1 修复）。
+ * 8. 首次 `/state` 失败时降级为 `ready` + 错误提示（平台未知不再永久停在 loading/空白）。
  *
  * ⚠️ 测试 renderer 的两个关键模拟（不对齐它们会得到假失败）：
  * - 注册到席位的是 `apply` 里的**包装组件**（只 `createElement(TerminalToolRow, …)` 一次），
@@ -222,7 +223,7 @@ section('apply：注册 settings.general.item')
     JSON.stringify(localeCalls),
   )
   check(
-    'webUiSettings 绑定到 entry id（0.1.7 的设置寻址）',
+    'webUiSettings 绑定到 entry id（设置面按 entry id 寻址）',
     boundNamespaces.join(',') === 'git-bash-terminal-tool',
     boundNamespaces.join(','),
   )
@@ -334,7 +335,7 @@ function makeApplyCtx(names) {
   check('服务到位后补登记席位', late.registered.length === 1, String(late.registered.length))
 }
 {
-  // 普通 0.1.7 部署：没有家族兼容层，只有官方原生 configForms。
+  // 普通部署（没有家族兼容层）：只有官方原生 configForms。
   const registered = []
   const gotEntryIds = []
   const nativeForm = {
@@ -392,7 +393,8 @@ section('行组件：渲染闸门与路径栏时机')
  * `settingsScope` 并覆写快照字段（writable / mode）来锁语义。
  * @param state - 假的 `/state` 响应体。
  * @param settings - 假的设置值；不给就模拟 scope 还没就绪（走 host 快照）。
- * @param options - `channel`：设置通道；`snapshot`：覆写快照字段。
+ * @param options - `channel`：设置通道；`snapshot`：覆写快照字段；
+ *   `failState`：让 `/state` 请求失败（模拟宿主未就绪 / 路由报错）。
  * @returns 展平后的元素树。
  */
 async function renderRow(state, settings, options = {}) {
@@ -416,11 +418,14 @@ async function renderRow(state, settings, options = {}) {
   }
   memoCache = null
   let wrapper
-  const factory = loadFactory(async (url) => ({
-    ok: true,
-    status: 200,
-    json: async () => (String(url).includes('/state') ? state : { candidates: [] }),
-  }))
+  const factory = loadFactory(async (url) => {
+    if (options.failState === true && String(url).includes('/state')) throw new Error('HTTP 500')
+    return {
+      ok: true,
+      status: 200,
+      json: async () => (String(url).includes('/state') ? state : { candidates: [] }),
+    }
+  })
   factory.factory(factoryRequire).apply({
     get: (name) => {
       if (name === 'slots') {
@@ -523,6 +528,19 @@ const loadingTree = await renderRow({
   capability: { supported: false },
 })
 check('平台未知（加载中）渲染 null', loadingTree === null, JSON.stringify(loadingTree))
+
+// 回归（0.5.0）：首次 /state 失败时平台未知；若继续停在 loading，设置行会永久消失（只能重挂载）。
+// 应降级为 ready + 错误提示，让用户看到「宿主状态读取失败」，而不是一行空白。
+const failedStateTree = await renderRow(
+  { platform: '', dialect: 'pwsh', bashPath: '', settingsAvailable: false, capability: { supported: false } },
+  { dialect: 'pwsh', bashPath: '', bashCandidates: [] },
+  { failState: true },
+)
+check(
+  '首次 /state 失败仍渲染设置行并显示错误',
+  failedStateTree !== null && JSON.stringify(failedStateTree).includes('HTTP 500'),
+  JSON.stringify(failedStateTree),
+)
 
 // 需求 1 + 3：默认（pwsh）只有两个可点的工具选项，没有路径栏、没有自动发现按钮。
 const pwshTree = await renderRow(

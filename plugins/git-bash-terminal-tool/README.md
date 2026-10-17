@@ -17,6 +17,8 @@ system prompt、终端卡片里都是 PowerShell 方言。装了这个插件之�
 - **前台等超时会「转后台」而不是杀掉命令**（官方 0.2.x 的 `promoteOnTimeout` 语义）：
   长命令等满 `timeoutMs` 后继续在后台跑，调用立刻交回 job id 与「到目前为止的输出」，
   之后用 `job_output` 读、`job_kill` 停，跑完还会收到一条完成通知。
+- **跟随会话当前目录**（DSH 0.2.1+）：模型用 `working_directory` 工具 `cd` 之后，`bash` 命令也在
+  新目录执行；结果与终端卡片显示实际执行目录（`cwd` / `tool/result.meta.cwd`）。
 
 切换**只对新会话生效**：运行中的会话保持它启动时的选择（这样工具目录与提示词不会中途变化，
 KV cache 与历史工具调用都不会错位）。改完开一个新会话即可。
@@ -45,12 +47,51 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
   这类扫描细节不再摊在设置页里 —— 多条路径时路径栏就是选择器。
 - 一个候选都没找到时，`Git Bash` 依然可选（只是还没有路径可用），点「自动发现」会给出一行「没有找到」说明。
 - 路径栏可以手填，但**只有「文件名叫 `bash`/`bash.exe`、真实存在、且不是 WSL」的路径才会生效**：
-  每次新会话替换前校验，不合法就跳过替换（会话照旧 pwsh）并写一行诊断；路径为空是合法中间态。
-  0.4.0 起加了**文件名判据**（见下），因为「存在即合法」会放进任何 exe。
+  每次新会话替换前校验（`validateSettings` → `validateBashPath`），不合法就跳过替换（会话照旧 pwsh）
+  并写一行诊断；路径为空是合法中间态。文件名判据 0.4.0 就写了，但直到 **0.5.0** 才真正接到替换前
+  校验上（见「升级到 0.5.0」）——只判「存在」会把任何 exe 静默注册成 bash 工具。
 - 运行时如果这台机器/这个 DSH 版本不具备替换所需的扩展点，设置行会显示「当前版本不支持：<原因>」，
   会话**完全不受影响**（插件不抛错、不 veto，只写诊断日志）。
 
 ![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/git-bash-terminal-tool.png)
+
+## 升级到 0.5.0（DSH 0.2.1：跟随会话当前目录 + 终端卡片 cwd）
+
+DSH 0.2.1 把「会话当前目录」从不可变的 `session.header.cwd` 拆成了可变的
+`ctx.workingDirectory`：模型可以用 `working_directory` 工具 `cd`。0.4.x 仍然读 header cwd，
+升级后的表现是：**模型 `cd` 到 `src/`，`bash` 却还在原目录跑，终端卡片显示的也是旧目录。**
+
+0.5.0 按官方 0.2.1 的终端工具契约逐条对齐：
+
+- **cwd 跟随 `working_directory`**：每次执行先 `await ctx.workingDirectory.ensure(agent, signal)`；
+  相对 `workdir` 相对当前目录解析；没有该服务时退回 `session.header.cwd`。
+  沙箱 workspace root 仍是原始项目（与官方一致：`cd` 不会扩大沙箱授权）。
+- **结果带 `cwd` + `presentationMeta`**：`background` / `promoted` / `foreground` 三个分支都带
+  `cwd`，并由 `output.presentationMeta` 把 `{ cwd }` 写进 `tool/result.meta` —— 0.2.1 的终端卡片
+  优先读它显示目录。
+- **后台任务归属**：`jobs.start({ toolCall: { callId, rootCallId } })`，PTC 子调用也能归到模型
+  真正发起的那次根调用，`job/registered` / `job/settled` 会话事件里的任务卡片能正确落位。
+- **工具参数/描述对齐**：`description` 排在 `command` 前，并补上官方 0.2.1 的
+  “Provide `description` before `command`” 提示；`workdir` 描述改成「默认当前会话目录」。
+- **设置行可写判据不变**：仍按 0.4.1 的口径只看宿主快照的 `writable` + `status === 'ready'`，
+  不读 `mode`（0.2.1 快照没有该字段，见「升级到 0.4.1」）。
+
+**0.5.0 同时修掉审计发现的四个缺陷**：
+
+- **文件名判据真正生效**：`validateSettings` 现在调用 `validateBashPath`，`node.exe` 等非 bash
+  可执行文件会在替换前被拒（0.4.0 声称的修复此前只落在发现算法里，没有接到替换前校验）。
+- **自动发现不再跳过安装根**：安装根改用**目录**存在性探测，注册表 / `%ProgramFiles%` / MSYS2 /
+  Cygwin 根在 git 不在 PATH 时也能扫到（此前把安装根当文件判断，整段扫描被跳过）。
+- **半注册回滚**：工具 / 提示词 section 注册到一半失败时**全部**撤回（按登记的逆序），不再留下
+  「`pwsh` 提示词被压掉、`bash` 工具半注册」的坏状态。
+- **首次 `/state` 失败不再永久隐藏设置行**：平台未知时降级为可渲染并显示错误，不再停在
+  `loading`（只能重挂载页面才恢复）；同时**默认不再探测 `bash --version`**，避免在 Fetch
+  handler 里同步 spawn 阻塞宿主事件循环。
+
+兼容性：0.2.1 的这些字段都是**可选读取 + 附加输出**——缺少 `workingDirectory` 时命令退回
+`session.header.cwd`，旧版任务注册表忽略多出来的 `toolCall`，旧 UI 忽略 `cwd` / `meta`，
+工具照常可用。**最低支持仍是 DSH 0.2.0**：0.2.0 上 `rootCallId` / `presentationMeta` 已齐（是
+`compatcheck` 的硬契约）；`workingDirectory` / `jobs.toolCall` 是 0.2.1 新增，0.2.0 上按缺失降级。
 
 ## 升级到 0.4.1（DSH 0.2.1）
 
@@ -207,7 +248,8 @@ C:\Program Files\mingw64\bin ← 不存在（而且 UCRT64 版 Git 用的是 ucr
 - `scripts/selftest.mjs` 现在**走公开入口 `apply()`** 断言「订阅的事件名」与「收到事件后的四个动作」，
   事件名再写错会立刻红；
 - 新增 `scripts/compatcheck.mjs`：拿官方产物逐条核对本插件依赖的每个契约，
-  支持 `node scripts/compatcheck.mjs --fetch 0.1.7-rc.2 0.2.0-rc.2`。
+  当时的核对命令是 `node scripts/compatcheck.mjs --fetch 0.1.7-rc.2 0.2.0-rc.2`（现在最低支持
+  0.2.0，见「DSH 兼容性」）。
 
 这两个契约写错的表现都是**静默失效**（cordis 不会因为事件名不存在而报错；没 await 也只是拿到
 一个 Promise），所以别把它们改回去。
@@ -245,6 +287,9 @@ bash.exe: *** fatal error - couldn't create signal pipe, Win32 error 5
 | 0.3.0 | 安装排障文档 + 版本号（首次发布） |
 | 0.3.1 | 与 0.3.0 内容相同，只把删 junction 的命令从 `Remove-Item -Recurse` 换成 `cmd /c rmdir`：旧版 Windows PowerShell（5.1）对 junction 用前者会连**链接目标**的内容一起删掉 |
 | 0.3.2 | 与 0.3.1 内容相同，只是改由仓库 CI（npm trusted publishing）发布，带 provenance，并在干净 Ubuntu 上复跑 tsc / build / selftest / clientsmoke |
+| 0.4.0 | 对齐 DSH 0.2.x 的执行契约：前台超时转后台（`promoted`）、后台输出拉取源、`owner` 用 agent id、PATH 安装根修正 |
+| 0.4.1 | 修 DSH 0.2.1 的设置行只读：`ConfigFormSnapshot` 删除 `mode` 后，可写判据只看 `writable` + `status`（0.5.0 已包含） |
+| 0.5.0 | 对齐 DSH 0.2.1：cwd 跟随 `working_directory`、结果与 `presentationMeta` 带 `cwd`、后台任务带 `toolCall`；并修安装根探测 / 文件名校验 / 半注册回滚 / `/state` 失败降级 |
 
 用部署里的真件复核过 DSH **0.2.0-rc.1 / 0.2.0-rc.2**：`node scripts/selftest.mjs` 与
 `node scripts/clientsmoke.mjs` 全绿（含 `@deepseek-ai/dsh-tools` 的工具 schema 校验器与
@@ -274,7 +319,7 @@ DSH 0.1.7 换了设置模型（旧 `ctx.settings.register` 已不存在），本
 设置 → 通用 → 终端工具 → 点 **Git Bash** → 点 **自动发现** → 开一个新会话。
 
 本版按 DSH **0.1.7-rc.2** 的设置模型实现：host 侧是 volatile Config；浏览器侧优先用家族兼容层的
-`webUiSettings`，没有它就退回官方原生 `configForms.get(entryId)`（所以普通 0.1.7 部署也能用）。
+`webUiSettings`，没有它就退回官方原生 `configForms.get(entryId)`（所以没有家族兼容层的普通部署也能用）。
 更旧的 DSH（0.1.5 那套 `ctx.settings.register` / `settingsScope`）请继续用 0.1.0。
 **0.3.3 起的最低支持版本是 DSH 0.1.7；自 0.4.1 起最低支持版本改为 DSH 0.2.0**（0.1.5 的
 `agent/session-start` 与同步 `confine` 都不再兼容，也不打算兼容）。
@@ -282,21 +327,30 @@ DSH 0.1.7 换了设置模型（旧 `ctx.settings.register` 已不存在），本
 ## DSH 兼容性
 
 - **最低支持 DSH 0.2.0**（自 0.4.1 起；0.1.7 及更早不再支持 —— 0.1.5 的 `agent/session-start`
-  与同步 `confine` 早已不兼容，0.1.7 也不再保证）。
-- 本次逐条核对的版本：**0.2.0-rc.2 / 0.2.1-rc.1**（另对 0.2.1-rc.2 抽检了客户端产物）。
+  与同步 `confine` 早已不兼容）。
+- 本次逐条核对的版本：**0.2.0-rc.2 / 0.2.1-rc.1 / 0.2.1-rc.2**（另用本机
+  `D:/env/node-global/dsh-stable` 部署 0.2.1-rc.2 复核了真件）。
 - 结论：
-  - **宿主侧契约在 0.2.1 仍成立**：per-agent 初始化事件 `agent/created`、async `ctx.sandbox.confine`、
-    `tools.restrict` / `tools.register`、`systemPrompt.section`、`ctx.jobs.start` 的 `output` 拉取源 /
-    `owner` 解析 / `wait` `read` `kill` `remove`、entry Config = volatile schemastery。
-    `scripts/selftest.mjs` 与 `scripts/compatcheck.mjs` 都覆盖这些裸字符串契约（0.2.0-rc.2 / 0.2.1-rc.1
-    上均 12/12 通过；`wait` / `read` / `kill` / `remove` 自 0.4.1 起为硬契约）。
+  - **宿主侧契约在 0.2.0 / 0.2.1 都成立**：per-agent 初始化事件 `agent/created`、async
+    `ctx.sandbox.confine`、`tools.restrict` / `tools.register`、`systemPrompt.section` /
+    `getSectionOrder`、`ToolExecution.rootCallId` + `output.presentationMeta`、`ctx.jobs.start` 的
+    `output` 拉取源 / `owner` 解析 / `wait` `read` `kill` `remove`、entry Config = volatile schemastery。
+    `scripts/compatcheck.mjs` 在 **0.2.0-rc.2 上 13/13、0.2.1-rc.1 与 0.2.1-rc.2 上各 17/17 通过**
+    （0.2.0 自动跳过 4 条 0.2.1 才有的契约）；`rootCallId` / `presentationMeta` 与
+    `wait` / `read` / `kill` / `remove` 都是**硬契约**（缺任一项直接红）。
+  - **0.2.1 新增并已核对的契约**：会话当前目录 `ctx.workingDirectory.ensure` +
+    `working-directory/change`、`jobs.start` 的 `toolCall`（`callId` + `rootCallId` 归属）、
+    官方终端工具 `dsh-tool-pwsh` 的 `cwd` + `presentationMeta` + `workingDirectory` 镜像、
+    `ConfigFormSnapshot` 没有 `mode`。0.2.0 部署上这些按缺失降级（工具退回 header cwd /
+    不做 job 归属），不影响最低支持版本内的可用性。
   - **客户端侧唯一真漂移**：0.2.1 的官方设置快照删除了 `mode` 字段——已由 0.4.1 修复（见「升级到 0.4.1」）。
   - 其余客户端契约（`settings.general.item` 的空 owner props、`slots` / `locale` 服务、设置按 entry id
     寻址、`webUiSettings` 与原生 `configForms` 的 `get` / `mutate` / `set` / `unset` 用法）在 0.2.1 上
     本次核对仍然成立。
-- 复跑（插件目录内）：`node scripts/selftest.mjs`、`node scripts/clientsmoke.mjs`；加
+- 复跑（插件目录内）：`node scripts/selftest.mjs`（无部署 211/211；加 `DSH_STABLE_HOME` 真件复核
+  227/227）、`node scripts/clientsmoke.mjs`（59/59）、
+  `node scripts/compatcheck.mjs --fetch 0.2.0-rc.2 0.2.1-rc.1 0.2.1-rc.2`。
   `DSH_STABLE_HOME=<部署目录>` 会用部署里的真件复核（事件契约 / schema 校验器 / `volatileForm`）。
-  契约漂移闸门：`node scripts/compatcheck.mjs --fetch 0.2.0-rc.2 0.2.1-rc.1`。
 
 ## 极简模式（minimal）的影响
 
@@ -379,7 +433,7 @@ cmd /c rmdir "$profile\node_modules\dsh-tweaks-git-bash-terminal-tool"
 
 > 这不是包内容的问题：把同一个包 `npm pack` 后在干净工程里 `pnpm add`、或用市场装到没有历史 link 的
 > profile 里都正常。只有「同一个包里既有本地 link、又要换成 registry 版本」时才会踩到。
-> 想少踩：开发调试改用 tarball（`npm pack` 后 `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.4.1.tgz`），
+> 想少踩：开发调试改用 tarball（`npm pack` 后 `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.5.0.tgz`），
 > 它不会留下 junction。
 
 ## 卸载
@@ -494,7 +548,8 @@ node scripts/selftest.mjs        # 发现算法 / 设置 / 升级契约 / 替换
 node scripts/clientsmoke.mjs     # client bundle 协议 + apply + 行组件
 
 # 契约漂移闸门：拿官方产物逐条核对（这里会真的 npm pack 到 .compat-cache/）
-node scripts/compatcheck.mjs --fetch 0.2.0-rc.2 0.2.1-rc.1
+# 0.2.0 上会自动跳过 0.2.1 才有的契约（since 机制）
+node scripts/compatcheck.mjs --fetch 0.2.0-rc.2 0.2.1-rc.1 0.2.1-rc.2
 
 # 让自测用**部署里的**真件复核：dsh-tools 的工具 schema 校验器 + dsh-settings 的 volatileForm（推荐，CI 里可不设）
 DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
@@ -502,7 +557,7 @@ DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
 
 拿**本地目录**调试（`dsh plugin add <本目录>`）会在 profile 里建一个 junction；**换回 npm 正式版之前先把它删掉**，
 否则 `pnpm add` 会以 `ERR_PNPM_EPERM` 失败（原因与判据见「安装 → 装不上？…」）。不想反复删就用 tarball 调试：
-`npm pack` → `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.4.1.tgz`。
+`npm pack` → `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.5.0.tgz`。
 
 设计文档见 [`docs/plans/git-bash-terminal-tool-design.md`](../../docs/plans/git-bash-terminal-tool-design.md)（本地文档，不入库），
 本仓库的开发约定、DSH 契约与通用坑见 [AGENTS.md](../../AGENTS.md)。
@@ -515,17 +570,23 @@ DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
 - 替换发生在 per-agent 初始化事件 `agent/created`（0.1.5-rc.1 的 `agent/session-start` 自 0.1.6 起已被官方移除，
   见「升级到 0.3.3」），动作只有三个：在**该 agent 自己的 scope** 里
   `tools.restrict({ deny: ['pwsh'] })`、`tools.register(<自包含 Git Bash 工具>)`、
-  `systemPrompt.section({ name: 'tool:pwsh', order: 1010, text: '' })` 压掉残留提示词。
+  `systemPrompt.section({ name: 'tool:pwsh', order: <TOOL_PWSH>, text: '' })` 压掉残留提示词
+  （顺序优先读 `systemPrompt.getSectionOrder()`，读不到才用常量）。注册到一半失败时按登记的逆序
+  **全部撤回**（0.5.0）。
+- **会话当前目录**（0.2.1）：`await ctx.workingDirectory.ensure(agent, signal)` → 命令 cwd；
+  没有该服务时退回 `session.header.cwd`。输出三个分支都带 `cwd`，并由 `presentationMeta`
+  写进 `tool/result.meta`。
 - 沙箱升级（`sandbox_permissions` + 审批）按官方契约**逐字**复刻（`src/host/escalation.ts`），
   包括错误文案、严格更宽顺序与 fail-closed 语义。
 - **超时 / 后台两条路径**（`src/host/bash-tool.ts`）按官方 0.2.x 复刻：
-  `ctx.jobs.start({ kind, label, owner: <agent id>, output: [拉取源…], run })`；
+  `ctx.jobs.start({ kind, label, owner: <agent id>, toolCall: { callId, rootCallId }, output: [拉取源…], run })`；
   有 `wait/read/kill/remove` 时前台「等满即转后台」（`promoted`），没有就退回「超时即杀」。
   两条**静默失效**的纪律写在源码注释里：`owner` 必须是 id 字符串、`output` 拉取源必须给
   （少给的表现是任务照常跑完但 `job_output` 永远为空）。
 - **PATH 组装**（`bashPathEntries` / `composePath`）按「Git 安装根 → 真实存在的子环境目录」推导：
   `bin` 上一层、`usr/bin` 上两层；`ucrt64` / `mingw64` / `clang64` 按存在性探测；
-  与环境 PATH 按归一化键去重。
+  与环境 PATH 按归一化键去重。发现算法的安装根按**目录**存在性判断，且默认不探测
+  `bash --version`（在 Fetch handler 里同步 spawn 会阻塞宿主事件循环）。
 - 包名/目录已改名为 `dsh-tweaks-git-bash-terminal-tool`（体现 Git Bash）。**设置 namespace 现在是
-  entry id `git-bash-terminal-tool`**（0.1.7 的设置面按 entry id 定位，见「升级到 0.2.0」）；
+  entry id `git-bash-terminal-tool`**（设置面按 entry id 定位，见「升级到 0.2.0」）；
   locale 命名空间与设置行 slot id 仍叫 `terminal-tool`（纯实现标识，不参与设置寻址）。

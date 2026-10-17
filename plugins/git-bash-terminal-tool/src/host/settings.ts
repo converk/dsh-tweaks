@@ -19,7 +19,7 @@
  * `replace.ts` 在每次替换前调 `validateSettings`，不合法就跳过替换（fail safe，会话照旧）。
  */
 import z from '@deepseek-ai/schemastery'
-import { fileOrLinkExists, isBlockedBash, normalizePathKey } from './discover.js'
+import { normalizePathKey, validateBashPath } from './discover.js'
 import type { TerminalToolSettings, VolatileLike } from './types.js'
 import type { Dialect } from '../shared/protocol.js'
 
@@ -132,8 +132,8 @@ export function readSettings(config: unknown): TerminalToolSettings {
 export function validateSettings(value: TerminalToolSettings): void {
   if (value.dialect !== 'bash') return
   if (value.bashPath.length === 0) return
-  if (isBlockedBash(value.bashPath, (name) => process.env[name])) {
-    throw new Error('invalid bashPath: 不接受 WSL 的 bash.exe')
-  }
-  if (!fileOrLinkExists(value.bashPath)) throw new Error(`invalid bashPath: 找不到文件 "${value.bashPath}"`)
+  // 与发现/校验共用同一条判据：WSL 硬排除、真实存在、文件名必须是 bash/bash.exe。
+  // 只判「存在」会把任意 exe（例如 node.exe）静默注册成 bash 工具。
+  const problem = validateBashPath(value.bashPath)
+  if (problem !== null) throw new Error(`invalid bashPath: ${problem}`)
 }

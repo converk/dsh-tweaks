@@ -109,6 +109,25 @@ function readService<T>(ctx: { get?(name: string): unknown }, name: string): T |
 }
 
 /**
+ * 读官方集中分配的提示词 section 顺序。
+ *
+ * `systemPrompt.getSectionOrder` 自 0.1.7 起存在；读不到（或抛错）时退回常量，
+ * 保证老部署与异常组合里仍能注册。
+ * @param systemPrompt - 提示词服务。
+ * @param name - 顺序名（`TOOL_BASH` / `TOOL_PWSH`）。
+ * @param fallback - 常量兜底。
+ * @returns 可用的顺序值。
+ */
+function readSectionOrder(systemPrompt: SystemPromptLike, name: string, fallback: number): number {
+  try {
+    const value = systemPrompt.getSectionOrder(name)
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+  } catch {
+    return fallback
+  }
+}
+
+/**
  * 对一个 agent 做一次替换尝试。
  *
  * 幂等由调用方（`registerReplacement` 的 `WeakSet`）保证；这里只负责判定与动作。
@@ -154,7 +173,7 @@ export function replaceTerminalTool(
   }
 
   // 第 3 条判定：`restrict` 的成功/抛错就是最准确、最省事的「该 agent 现在能看见 pwsh 吗」。
-  let releaseRestriction: (() => void) | undefined
+  let releaseRestriction: () => void
   try {
     releaseRestriction = tools.restrict({ deny: [PWSH_TOOL_NAME] })
   } catch (error) {
@@ -164,17 +183,25 @@ export function replaceTerminalTool(
     return { applied: false, reason: `pwsh is not restrictable here (already hidden?): ${message}` }
   }
 
+  const releases: (() => void)[] = []
   try {
+    releases.push(releaseRestriction)
     const runtime = buildRuntime(host, settings.bashPath)
     const releaseTool = tools.register(createBashTool(runtime))
-    const releasePwshSection = systemPrompt.section({ name: 'tool:pwsh', order: ORDER_TOOL_PWSH, text: '' })
+    releases.push(releaseTool)
+    // 顺序名由官方集中分配；优先读服务（合约漂移时自动跟随），读不到再用常量。
+    const orderPwsh = readSectionOrder(systemPrompt, 'TOOL_PWSH', ORDER_TOOL_PWSH)
+    const orderBash = readSectionOrder(systemPrompt, 'TOOL_BASH', ORDER_TOOL_BASH)
+    const releasePwshSection = systemPrompt.section({ name: 'tool:pwsh', order: orderPwsh, text: '' })
+    releases.push(releasePwshSection)
     const releaseBashSection = systemPrompt.section({
       name: 'tool:bash',
-      order: ORDER_TOOL_BASH,
+      order: orderBash,
       text: TOOL_BASH_SECTION_TEXT,
     })
+    releases.push(releaseBashSection)
     // 所有 disposer 都登记到 agent 自己的 ctx 上：agent 释放时自动撤销。
-    for (const release of [releaseRestriction, releaseTool, releasePwshSection, releaseBashSection]) {
+    for (const release of releases) {
       try {
         agentCtx.effect(() => release, 'git-bash-terminal-tool: replacement')
       } catch {
@@ -184,11 +211,14 @@ export function replaceTerminalTool(
     diag(`replace: applied agent=${agent.id} bash=${settings.bashPath}`)
     return { applied: true }
   } catch (error) {
-    // 注册失败要把已经生效的 restriction 撤回，避免留下「两个都看不见」的坏状态。
-    try {
-      releaseRestriction()
-    } catch {
-      // 忽略。
+    // 注册到一半失败必须**全部**撤回：只撤 restriction 会留下「工具已注册、
+    // pwsh 提示词已被压掉」的半坏状态（直到 agent 释放才恢复）。
+    for (const release of [...releases].reverse()) {
+      try {
+        release()
+      } catch {
+        // 忽略单个 disposer 的失败，继续撤回其余。
+      }
     }
     const message = error instanceof Error ? error.message : String(error)
     diag(`replace: failed agent=${agent.id}: ${message}`)
@@ -205,6 +235,9 @@ function buildRuntime(host: HostContextLike, bashPath: string): BashToolRuntime 
   const shellEnv = readService<{ collect: unknown }>(host, 'shellEnv')
   const approval = readService<{ request: unknown }>(host, 'approval')
   const shell = readService<{ sandboxMode?: unknown }>(host, 'shell')
+  // DSH 0.2.1 新增：会话当前工作目录（`working_directory` 工具可改）。
+  // 老版本没有这个服务，工具内部退回 `session.header.cwd`。
+  const workingDirectory = readService<{ ensure: unknown }>(host, 'workingDirectory')
   if (subprocess === undefined || typeof subprocess.spawn !== 'function') {
     throw new Error('ctx.subprocess is not visible')
   }
@@ -227,6 +260,9 @@ function buildRuntime(host: HostContextLike, bashPath: string): BashToolRuntime 
       : {}),
     ...(jobs !== undefined && typeof jobs.start === 'function'
       ? { jobs: jobs as NonNullable<BashToolRuntime['jobs']> }
+      : {}),
+    ...(workingDirectory !== undefined && typeof workingDirectory.ensure === 'function'
+      ? { workingDirectory: workingDirectory as NonNullable<BashToolRuntime['workingDirectory']> }
       : {}),
     ...(shellEnv !== undefined && typeof shellEnv.collect === 'function'
       ? { shellEnv: shellEnv as NonNullable<BashToolRuntime['shellEnv']> }

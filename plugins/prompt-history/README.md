@@ -19,7 +19,7 @@
 
 ## 说明
 
-- **只在输入框为空时才接管 ↑**：不会跟 `/` 命令菜单、`@` 引用菜单抢方向键，也不会打断正常编辑（输入法打字中、按着 Ctrl/Alt 时都不管）。
+- **只在输入框为空时才接管 ↑**：不会跟 `/` 命令菜单、`@` 引用菜单抢方向键，也不会打断正常编辑（输入法打字中、按着 Ctrl/Alt/Shift 时都不管）。
 - **历史只属于当前会话**：包含你在运行中插话发过的内容；刷新页面后依然在。
 - 直接开始打字就会退出历史浏览，已经填进输入框的内容会保留（"回忆出来直接改"）。
 - 最多记 200 条。
@@ -35,13 +35,16 @@ npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugin
 
 > `web` 为 DSH 的 profile 名称，可在 `C:\Users\你的用户名\.dsh\profiles\` 下确认。
 
-## DSH 兼容性（本次审计）
+## DSH 兼容性（0.2.1 审计 / 0.1.1）
 
 - **最低支持 DSH 0.2.0**（2026-10 起不再考虑 0.1.7）。
 - 本次逐条核对的版本：**0.2.0-rc.2** 与 **0.2.1-rc.1**；另对 npm `next` 的 **0.2.1-rc.2** 做了关键产物抽检（关键 client 产物与 rc.1 逐字节相同）。
 - 核对方式：直接读官方产物（`lib/types/**/*.d.ts` 与已构建的 `lib/client.js`），对同名文件做 sha256 逐字比对；类型看不出的地方再读运行时产物里的真实结构。
-- **结论：本插件依赖的契约在 0.2.1 全部仍然成立，没有需要修的真失效 → 本次未改动运行期代码。**
-- 本次补齐了 `scripts/selftest.mjs` 契约闸门：无 DSH 部署时跑 bundle 协议 + 源码契约面 + vm 驱动 `apply` 的行为断言（CI 可跑）；设 `DSH_CONTRACT_HOMES` 时追加官方产物原文/结构断言（overlay 席位、标准 props、快照类型、`inputActions.setDraft`、locale 签名、`data-composer-card` 与 overlay 的运行时邻接）。
+- **结论：本插件依赖的契约在 0.2.1 全部仍然成立，没有需要修的真失效。**
+- 0.1.1 的改动只涉及行为，不涉及契约：
+  - 多段 text 块之间改用换行连接，不再首尾相接地粘成一串——这是对「一条消息多个 text 块」的防御性兼容；官方 composer 目前每条用户消息只有一个 text 块；
+  - **Shift+↑/↓ 放行**：不再被历史召回拦截，保留编辑器自己的选择行为。
+- `scripts/selftest.mjs` 契约闸门：无 DSH 部署时跑 bundle 协议 + 源码契约面 + 纯逻辑历史提取（esbuild 现场构建 `src/shared/history.ts`）+ vm 驱动 `apply` 的行为断言（CI 可跑）；设 `DSH_CONTRACT_HOMES` 时追加官方产物原文/结构断言（overlay 席位、标准 props、快照类型、`inputActions.setDraft`、locale 签名、`data-composer-card` 与 overlay 的运行时邻接）。
 
 | 本插件用到的契约 | 官方产物位置（相对 `<dsh>/node_modules/@deepseek-ai/`） | 0.2.0 → 0.2.1 核对结果 |
 |---|---|---|
@@ -67,7 +70,7 @@ npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugin
   （`scripts/selftest.mjs` 已有这条官方产物断言，本机设了 `DSH_CONTRACT_HOMES` 时生效）。
 - `useChat` / `useInput` / `inputActions` 是 Slot 运行时注入的 props，本插件用**结构投影**
   （`src/client/types.ts`）读取，**没有编译期保证**；升级 DSH 后同样要跑一遍真机冒烟（输入框为空时按 ↑）。
-- 本插件现在有 `scripts/selftest.mjs`（CI 自动跑：bundle 协议 + 源码契约面 + vm 驱动 apply；官方产物段需要本机有 DSH 部署，CI 上自动跳过）；**仍没有 clientsmoke**——键盘交互最终仍需真机冒烟。
+- 本插件现在有 `scripts/selftest.mjs`（CI 自动跑：bundle 协议 + 源码契约面 + 纯逻辑历史提取 + vm 驱动 apply；官方产物段需要本机有 DSH 部署，CI 上自动跳过）；**仍没有 clientsmoke**——键盘交互（Shift 放行、IME 组合期、相位判断）最终仍需真机冒烟。
 
 ## 开发者
 

@@ -27,6 +27,7 @@ import {
   approveEscalation,
   bashInstallRoot,
   bashOutputSchema,
+  canonicalPath,
   bashPathEntries,
   composeEnv,
   composePath,
@@ -48,6 +49,7 @@ import {
   readSettings,
   replaceTerminalTool,
   resolveSettings,
+  resolveWorkdir,
   sandboxDenialMarker,
   validateBashPath,
   validateEscalationArgs,
@@ -124,8 +126,10 @@ function win(path) {
 /** 一个假的探测环境：指定存在的路径、注册表值、PATH 上的 git、PATH 目录。 */
 function fakeProbes(options) {
   const existing = new Set((options.existing ?? []).map((p) => win(p).toLowerCase()))
+  const directories = new Set((options.dirs ?? []).map((p) => win(p).toLowerCase()))
   return {
     fileExists: (path) => existing.has(win(path).toLowerCase()),
+    directoryExists: (path) => directories.has(win(path).toLowerCase()),
     whereGit: () => options.whereGit ?? [],
     // 分隔符归一后再比较：测试源码里的反斜杠转义不影响断言。
     readRegistry: (hive, key, name) => {
@@ -179,15 +183,33 @@ section('发现算法：Git for Windows 注册表（含悬空残留）')
 
   const root = 'C:/Program Files/Git'
   const valid = fakeProbes({
-    existing: [root, `${root}/bin/bash.exe`, `${root}/usr/bin/bash.exe`],
+    existing: [`${root}/bin/bash.exe`, `${root}/usr/bin/bash.exe`],
+    dirs: [root],
     registry: { 'HKLM|SOFTWARE\\GitForWindows|InstallPath': root },
     env: {},
     versions: { [win(`${root}/bin/bash.exe`)]: 'GNU bash, version 5.2.26' },
   })
-  const candidates = discoverBash({ probes: valid })
+  const candidates = discoverBash({ probes: valid, withVersion: true })
   check('注册表来源出 2 个候选', candidates.length === 2, JSON.stringify(candidates.map((c) => c.path)))
+  // 回归：安装根是目录，不能被 fileExists（只认文件/链接）当成不存在而跳过整段扫描。
+  const rootOnly = fakeProbes({
+    existing: [`${root}/bin/bash.exe`],
+    dirs: [root],
+    registry: { 'HKLM|SOFTWARE\\GitForWindows|InstallPath': root },
+    whereGit: [],
+    env: {},
+  })
+  check(
+    '安装根按目录判断（不被文件存在性跳过）',
+    discoverBash({ probes: rootOnly }).some((candidate) => candidate.source === 'git-for-windows'),
+    JSON.stringify(discoverBash({ probes: rootOnly }).map((c) => c.path)),
+  )
   check('来源标记为 git-for-windows', candidates.every((c) => c.source === 'git-for-windows'))
   check('版本探测写进候选', candidates[0]?.version === 'GNU bash, version 5.2.26')
+  check(
+    '默认不探测版本（避免 Fetch handler 同步 spawn 阻塞）',
+    discoverBash({ probes: valid })[0]?.version === undefined,
+  )
 }
 
 section('发现算法：排序与去重')
@@ -196,7 +218,6 @@ section('发现算法：排序与去重')
   const msys = 'C:/msys64'
   const probes = fakeProbes({
     existing: [
-      root,
       `${root}/bin/bash.exe`,
       `${root}/usr/bin/bash.exe`,
       `${msys}/usr/bin/bash.exe`,
@@ -204,6 +225,7 @@ section('发现算法：排序与去重')
       'D:/env/msys2/usr/bin/bash.exe',
       'D:/env/msys2/usr/bin/git.exe',
     ],
+    dirs: [root, msys],
     whereGit: ['D:/env/msys2/usr/bin/git.exe'],
     registry: { 'HKLM|SOFTWARE\\GitForWindows|InstallPath': root },
     env: {},
@@ -292,6 +314,12 @@ section('设置：解析与校验')
         validateSettings({ dialect: 'bash', bashPath: bashFile, bashCandidates: [] })
         return true
       })(),
+    )
+    // 回归：只判「存在」会把 node.exe 静默注册成 bash 工具（文件名判据必须在生产校验里生效）。
+    throws(
+      'bash 指向存在的非 bash 可执行文件被拒',
+      () => validateSettings({ dialect: 'bash', bashPath: process.execPath, bashCandidates: [] }),
+      '不是 bash 可执行文件',
     )
     throws(
       'bash 指向 WSL 被拒',
@@ -525,25 +553,33 @@ section('沙箱升级：有序 fail-closed 序列')
 
 /** 造一个假的 agent.ctx：记录 restrict / register / section 的调用。 */
 function fakeAgent(options = {}) {
-  const calls = { restrict: [], register: [], section: [], effects: [] }
+  const calls = { restrict: [], register: [], section: [], effects: [], released: { restrict: 0, tool: 0, sections: 0 } }
   const tools = {
     restrict(filter) {
       calls.restrict.push(filter)
       if (options.restrictThrows === true) throw new Error('tools.restrict() names unknown global tool "pwsh"')
-      return () => {}
+      return () => {
+        calls.released.restrict += 1
+      }
     },
     register(definition) {
       calls.register.push(definition)
-      return () => {}
+      return () => {
+        calls.released.tool += 1
+      }
     },
   }
   const systemPrompt = {
     section(section) {
       calls.section.push(section)
-      return () => {}
+      if (options.sectionThrowsAt === calls.section.length) throw new Error('section registration exploded')
+      return () => {
+        calls.released.sections += 1
+      }
     },
-    getSectionOrder() {
-      return 1000
+    getSectionOrder(name) {
+      // 与真实 dsh-system-prompt 的 SECTION_ORDERS 一致：TOOL_BASH=1000、TOOL_PWSH=1010。
+      return name === 'TOOL_PWSH' ? 1010 : 1000
     },
   }
   const id = options.id ?? 'session-1'
@@ -629,6 +665,19 @@ section('替换：成功路径的四个动作')
   )
   check('所有 disposer 都登记到了 agent.ctx.effect', calls.effects.length === 4, String(calls.effects.length))
   check('注册的工具带 output.schema', typeof calls.register[0].output.render === 'function')
+}
+
+section('替换：注册到一半失败必须全部回滚')
+{
+  // 第二个 section 抛错：已注册的工具、已生效的 tool:pwsh 空 section、restriction 都要撤回，
+  // 否则会留下「pwsh 提示词被压掉、bash 工具半注册」的坏状态直到 agent 释放。
+  const services = { subprocess: { spawn() {} } }
+  const { agent, calls } = fakeAgent({ sectionThrowsAt: 2, services })
+  const result = replaceTerminalTool(fakeHost(services), agent, { dialect: 'bash', bashPath: GIT_BASH })
+  check('部分注册失败返回 applied=false', result.applied === false, JSON.stringify(result))
+  check('失败后释放了 restriction', calls.released.restrict === 1, String(calls.released.restrict))
+  check('失败后释放了已注册的工具', calls.released.tool === 1, String(calls.released.tool))
+  check('失败后释放了已生效的 section', calls.released.sections === 1, String(calls.released.sections))
 }
 }
 
@@ -965,8 +1014,8 @@ const OFFICIAL_OUTPUT_SNAPSHOT = {
     {
       type: 'object',
       additionalProperties: false,
-      properties: { kind: { type: 'string', const: 'background' }, jobId: { type: 'string' } },
-      required: ['kind', 'jobId'],
+      properties: { kind: { type: 'string', const: 'background' }, jobId: { type: 'string' }, cwd: { type: 'string' } },
+      required: ['kind', 'jobId', 'cwd'],
     },
     {
       type: 'object',
@@ -974,16 +1023,18 @@ const OFFICIAL_OUTPUT_SNAPSHOT = {
       properties: {
         kind: { type: 'string', const: 'promoted' },
         jobId: { type: 'string' },
+        cwd: { type: 'string' },
         timeoutMs: { type: 'number' },
         output: { type: 'string' },
       },
-      required: ['kind', 'jobId', 'timeoutMs', 'output'],
+      required: ['kind', 'jobId', 'cwd', 'timeoutMs', 'output'],
     },
     {
       type: 'object',
       additionalProperties: false,
       properties: {
         kind: { type: 'string', const: 'foreground' },
+        cwd: { type: 'string' },
         exitCode: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
         signal: { oneOf: [{ type: 'string' }, { type: 'null' }] },
         timedOut: { type: 'boolean' },
@@ -1014,7 +1065,7 @@ const OFFICIAL_OUTPUT_SNAPSHOT = {
           required: ['mode', 'denied'],
         },
       },
-      required: ['kind', 'exitCode', 'signal', 'timedOut', 'aborted', 'timeoutMs', 'stdout', 'stderr'],
+      required: ['kind', 'cwd', 'exitCode', 'signal', 'timedOut', 'aborted', 'timeoutMs', 'stdout', 'stderr'],
     },
   ],
 }
@@ -1057,14 +1108,19 @@ console.log(
 section('设置：用部署里的 dsh-settings 复核 volatileForm（有部署时）')
 {
   const home = process.env.DSH_STABLE_HOME
-  if (home === undefined) {
-    console.log('  info 未提供 DSH_STABLE_HOME：跳过 volatileForm 复核（设置表单就是它投影的）')
+  // 本机有 DSH 源码/单包产物时可直接指到具体文件（不必凑出完整安装目录）。
+  const settingsEntryOverride = process.env.DSH_SETTINGS_ENTRY
+  const schemaEntryOverride = process.env.DSH_SCHEMASTERY_ENTRY
+  if (home === undefined && settingsEntryOverride === undefined) {
+    console.log('  info 未提供 DSH_STABLE_HOME / DSH_SETTINGS_ENTRY：跳过 volatileForm 复核（设置表单就是它投影的）')
   } else {
     const { pathToFileURL } = await import('node:url')
-    const schemaEntry = join(home, 'node_modules/@deepseek-ai/schemastery/lib/index.mjs')
+    const schemaEntry =
+      schemaEntryOverride ?? join(home, 'node_modules/@deepseek-ai/schemastery/lib/index.mjs')
     // ⚠️ dsh-settings 的 exports 不暴露这个子路径，只能按文件路径 import；
     // 它内部的裸 import 会从自己的目录解析，不受本仓库 node_modules 影响。
-    const settingsEntry = join(home, 'node_modules/@deepseek-ai/dsh-settings/lib/types/schema.js')
+    const settingsEntry =
+      settingsEntryOverride ?? join(home, 'node_modules/@deepseek-ai/dsh-settings/lib/types/schema.js')
     try {
       const schemaMod = await import(pathToFileURL(schemaEntry).href)
       const Schema = schemaMod.Schema ?? schemaMod.default ?? schemaMod
@@ -1179,6 +1235,7 @@ section('工具：parameters / output.schema 形状（对齐官方编译结果�
   // 5) 真实返回的值必须落在声明的 output.schema 里。
   const foregroundValue = {
     kind: 'foreground',
+    cwd: 'D:/work',
     exitCode: 0,
     signal: null,
     timedOut: false,
@@ -1196,11 +1253,11 @@ section('工具：parameters / output.schema 形状（对齐官方编译结果�
     ],
     // 官方 0.2.x 新增：被 job_kill 停过的运行带 stopped。
     ['foreground+stopped', { ...foregroundValue, exitCode: 1, stopped: 'session archived' }, true],
-    ['background', { kind: 'background', jobId: 'bash-1' }, true],
+    ['background', { kind: 'background', jobId: 'bash-1', cwd: 'D:/work' }, true],
     // 官方 0.2.x 新增的第三分支：前台等超时后转后台。
-    ['promoted', { kind: 'promoted', jobId: 'bash-1', timeoutMs: 1000, output: 'partial\n' }, true],
+    ['promoted', { kind: 'promoted', jobId: 'bash-1', cwd: 'D:/work', timeoutMs: 1000, output: 'partial\n' }, true],
     // additionalProperties: false —— 多带字段必须被拒，否则 UI 会拿到没约定的形状。
-    ['promoted+多余字段', { kind: 'promoted', jobId: 'bash-1', timeoutMs: 1000, output: '', extra: 1 }, false],
+    ['promoted+多余字段', { kind: 'promoted', jobId: 'bash-1', cwd: 'D:/work', timeoutMs: 1000, output: '', extra: 1 }, false],
   ]
   for (const [name, value, shouldPass] of values) {
     const violations = validateValue(bashOutputSchema(), value)
@@ -1218,6 +1275,160 @@ section('工具：parameters / output.schema 形状（对齐官方编译结果�
       )
     }
   }
+}
+
+section('工具：DSH 0.2.1 的 cwd / workingDirectory / job toolCall')
+{
+  // 一个「跑一条命令就立刻成功退出」的 runtime，记录 spawn 收到的 cwd。
+  const fixedRuntime = (extra) => {
+    const calls = { cwd: [], argv: [] }
+    return {
+      calls,
+      runtime: {
+        bashPath: 'D:/env/Git/bin/bash.exe',
+        subprocess: {
+          spawn(spec) {
+            calls.cwd.push(spec.cwd)
+            calls.argv.push(spec.argv)
+            return {
+              collected: {
+                stdout: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+                stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+              },
+              done: Promise.resolve({ exitCode: 0, signal: null }),
+              terminate() {},
+            }
+          },
+        },
+        ...extra,
+      },
+    }
+  }
+  const projected = resolve(tmpdir(), 'dsh-git-bash-projected')
+  const legacy = process.cwd()
+
+  // ① workingDirectory.ensure 优先于不可变的 session.header.cwd。
+  {
+    const { runtime, calls } = fixedRuntime({ workingDirectory: { ensure: async () => projected } })
+    const tool = createBashTool(runtime)
+    const value = await tool.execute(
+      { command: 'pwd', description: 'print cwd' },
+      {
+        callId: 'c-wd',
+        rootCallId: 'root-wd',
+        signal: new AbortController().signal,
+        agent: { id: 'a', session: { header: { cwd: legacy } } },
+      },
+    )
+    check('0.2.1：命令 cwd 来自 workingDirectory 而不是 header cwd', calls.cwd[0] === projected, String(calls.cwd[0]))
+    check('0.2.1：结果里的 cwd 就是实际执行目录', value.cwd === projected, String(value.cwd))
+    check('0.2.1：output.presentationMeta 给出 cwd（终端卡片读它）', JSON.stringify(tool.output.presentationMeta({}, value)) === JSON.stringify({ cwd: projected }))
+  }
+
+  // ② 相对 workdir 相对于「当前工作目录」解析（不是原始工作区）。
+  {
+    const { runtime, calls } = fixedRuntime({ workingDirectory: { ensure: async () => projected } })
+    const value = await createBashTool(runtime).execute(
+      { command: 'ls', description: 'list', workdir: 'src' },
+      { callId: 'c-rel', signal: new AbortController().signal, agent: { id: 'a', session: { header: { cwd: legacy } } } },
+    )
+    check('0.2.1：相对 workdir 解析到当前工作目录下', calls.cwd[0] === resolve(projected, 'src'), String(calls.cwd[0]))
+    check('0.2.1：相对 workdir 的 cwd 也回填到结果', value.cwd === resolve(projected, 'src'), String(value.cwd))
+  }
+
+  // ③ 没有 workingDirectory 的老部署：退回 header cwd（仍按旧口径 canonical 化）。
+  {
+    const { runtime, calls } = fixedRuntime({})
+    const value = await createBashTool(runtime).execute(
+      { command: 'pwd', description: 'print cwd' },
+      { callId: 'c-old', signal: new AbortController().signal, agent: { id: 'a', session: { header: { cwd: legacy } } } },
+    )
+    check('老部署：退回 session.header.cwd', calls.cwd[0] === canonicalPath(legacy), String(calls.cwd[0]))
+    check('老部署：结果也带 cwd', value.cwd === canonicalPath(legacy), String(value.cwd))
+  }
+
+  // ④ ensure 的 Promise 必须被 await（拿到 Promise 会被当成 cwd 传给 spawn）。
+  {
+    let ensured = false
+    const { runtime, calls } = fixedRuntime({
+      workingDirectory: {
+        ensure: async () => {
+          await new Promise((r) => setTimeout(r, 5))
+          ensured = true
+          return projected
+        },
+      },
+    })
+    await createBashTool(runtime).execute(
+      { command: 'pwd', description: 'print cwd' },
+      { callId: 'c-await', signal: new AbortController().signal, agent: { id: 'a', session: { header: { cwd: legacy } } } },
+    )
+    check('workingDirectory.ensure 被 await（不是把 Promise 当 cwd）', ensured && calls.cwd[0] === projected, String(calls.cwd[0]))
+  }
+
+  // ⑤ 老部署的 policy workspace root 只在没有会话 cwd 时兜底（不能让 0.2.1 的原始工作区覆盖 cd）。
+  check('resolveWorkdir：会话 cwd 优先于策略 root', resolveWorkdir(undefined, projected, legacy) === projected)
+  check('resolveWorkdir：没有会话 cwd 才用策略 root', resolveWorkdir(undefined, undefined, legacy) === legacy)
+  check('resolveWorkdir：相对路径按会话 cwd 解析', resolveWorkdir('src', projected, legacy) === resolve(projected, 'src'))
+
+  // ⑥ 后台任务把创建它的工具调用（含根调用）写进 job 生命周期记录。
+  {
+    const specs = []
+    const tool = createBashTool({
+      bashPath: 'D:/env/Git/bin/bash.exe',
+      subprocess: { spawn: () => { throw new Error('not reached') } },
+      jobs: { start(spec) { specs.push(spec); return 'bash-job-1' } },
+    })
+    const value = await tool.execute(
+      { command: 'echo bg', description: 'background', run_in_background: true },
+      {
+        callId: 'call-ptc-2',
+        rootCallId: 'call-root',
+        signal: new AbortController().signal,
+        agent: { id: 'session-job', session: { header: { cwd: legacy } } },
+      },
+    )
+    check('后台值带 cwd', value.kind === 'background' && value.cwd === canonicalPath(legacy), JSON.stringify(value))
+    check(
+      'jobs.start 收到 toolCall（callId + rootCallId）',
+      JSON.stringify(specs[0]?.toolCall) === JSON.stringify({ callId: 'call-ptc-2', rootCallId: 'call-root' }),
+      JSON.stringify(specs[0]?.toolCall),
+    )
+  }
+  {
+    const specs = []
+    const tool = createBashTool({
+      bashPath: 'D:/env/Git/bin/bash.exe',
+      subprocess: { spawn: () => { throw new Error('not reached') } },
+      jobs: { start(spec) { specs.push(spec); return 'bash-job-2' } },
+    })
+    await tool.execute(
+      { command: 'echo bg', description: 'background', run_in_background: true },
+      { callId: 'call-old', signal: new AbortController().signal, agent: { id: 'session-old' } },
+    )
+    check(
+      '老版本没有 rootCallId 时退回 callId',
+      specs[0]?.toolCall?.rootCallId === 'call-old',
+      JSON.stringify(specs[0]?.toolCall),
+    )
+  }
+
+  // ⑦ 缺 cwd 的旧形状必须被 schema 拒绝（防止回退时静默丢字段）。
+  check(
+    'cwd 是 output.schema 的必填字段',
+    validateValue(bashOutputSchema(), { kind: 'background', jobId: 'bash-1' }).length > 0,
+  )
+  check('presentationMeta 对缺 cwd 的值返回 undefined', createBashTool(fixedRuntime({}).runtime).output.presentationMeta({}, { kind: 'background', jobId: 'x' }) === undefined)
+
+  // ⑧ 只有 0.2.1+ 才在工具描述里提 `working_directory`（老部署没有那个工具）。
+  check(
+    '有 workingDirectory 时描述提到 working_directory 工具',
+    createBashTool(fixedRuntime({ workingDirectory: { ensure: async () => projected } }).runtime).description.includes('`working_directory` tool'),
+  )
+  check(
+    '老部署（没有 workingDirectory）不画不存在工具的饼',
+    !createBashTool(fixedRuntime({}).runtime).description.includes('`working_directory` tool'),
+  )
 }
 
 section('工具：参数校验文案')

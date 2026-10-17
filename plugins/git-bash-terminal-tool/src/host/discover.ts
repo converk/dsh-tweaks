@@ -16,7 +16,7 @@
  * 所有外部探测都走 {@link DiscoveryProbes}，`scripts/selftest.mjs` 用它注入
  * 假的文件系统/注册表来驱动这段逻辑。
  */
-import { lstatSync } from 'node:fs'
+import { lstatSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { basename, delimiter, dirname, join, resolve, sep } from 'node:path'
 
@@ -39,6 +39,13 @@ export interface BashCandidate {
 export interface DiscoveryProbes {
   /** 文件（或符号链接）是否存在。 */
   fileExists(path: string): boolean
+  /**
+   * 目录是否存在（安装根探测用）。
+   *
+   * 老的自测探测缝可以省略：省略时退回 `fileExists`（兼容旧 fixture）。
+   * 生产实现必须区分文件与目录——把安装根当文件判断会让注册表/默认根扫描全部失效。
+   */
+  directoryExists?(path: string): boolean
   /** `where git` 的输出行；不可用时返回空数组。 */
   whereGit(): readonly string[]
   /** 读一条注册表值；没有则返回 undefined。 */
@@ -230,7 +237,7 @@ function collectFromRoots(
 ): { path: string; source: BashSource }[] {
   const found: { path: string; source: BashSource }[] = []
   for (const root of roots) {
-    if (!existsAsFile(probes, root)) continue
+    if (!existsAsDirectory(probes, root)) continue
     for (const candidate of bashCandidatesForRoot(root)) {
       if (existsAsFile(probes, candidate)) found.push({ path: resolve(candidate), source })
     }
@@ -243,9 +250,16 @@ export function defaultProbes(): DiscoveryProbes {
   const env = (name: string): string | undefined => process.env[name]
   return {
     fileExists: fileOrLinkExists,
+    directoryExists: (path) => {
+      try {
+        return statSync(toExtendedPath(path)).isDirectory()
+      } catch {
+        return false
+      }
+    },
     whereGit: () => {
       try {
-        const result = spawnSync('where.exe', ['git'], { encoding: 'utf8', windowsHide: true, timeout: 5000 })
+        const result = spawnSync('where.exe', ['git'], { encoding: 'utf8', windowsHide: true, timeout: 2000 })
         if (result.status !== 0 || typeof result.stdout !== 'string') return []
         return result.stdout
           .split(/\r?\n/)
@@ -260,7 +274,7 @@ export function defaultProbes(): DiscoveryProbes {
         const result = spawnSync('reg.exe', ['query', `${hive}\\${key}`, '/v', name], {
           encoding: 'utf8',
           windowsHide: true,
-          timeout: 5000,
+          timeout: 2000,
         })
         if (result.status !== 0 || typeof result.stdout !== 'string') return undefined
         const match = /REG_[A-Z_]+\s+(.+?)\s*$/m.exec(result.stdout)
@@ -275,7 +289,7 @@ export function defaultProbes(): DiscoveryProbes {
         const result = spawnSync(bashPath, ['-c', 'bash --version'], {
           encoding: 'utf8',
           windowsHide: true,
-          timeout: 5000,
+          timeout: 2000,
         })
         if (result.status !== 0 || typeof result.stdout !== 'string') return undefined
         const first = result.stdout.split(/\r?\n/)[0]?.trim()
@@ -314,10 +328,15 @@ export function discoverGitExecutables(probes: DiscoveryProbes): string[] {
  *
  * 顺序：来源优先级（saved > git-for-windows > msys2 > cygwin > git-path），
  * 同源内按路径字典序，结果稳定可复现。命中 WSL 的路径**直接丢弃**。
- * @param options - `saved`（用户已保存的 `bashPath`，排最前）与探测缝。
+ *
+ * ⚠️ 默认**不**探测 `bash --version`：`probeVersion` 是同步 spawn，放在 Fetch
+ * 路由里会阻塞宿主事件循环（每个候选最多数秒）。设置行只显示路径，version 是可选的诊断信息。
+ * @param options - `saved`（用户已保存的 `bashPath`，排最前）、探测缝与是否探测版本。
  * @returns 候选列表（可能为空 → 需求 4 的置灰条件）。
  */
-export function discoverBash(options: { saved?: string | undefined; probes?: DiscoveryProbes } = {}): BashCandidate[] {
+export function discoverBash(
+  options: { saved?: string | undefined; probes?: DiscoveryProbes; withVersion?: boolean } = {},
+): BashCandidate[] {
   const probes = options.probes ?? defaultProbes()
   const env = (name: string): string | undefined => probes.env(name)
   const collected: { path: string; source: BashSource }[] = []
@@ -334,14 +353,14 @@ export function discoverBash(options: { saved?: string | undefined; probes?: Dis
   // 2) Git for Windows 注册表（目录不存在就丢弃 —— 本机就是悬空残留）。
   for (const entry of GIT_FOR_WINDOWS_KEYS) {
     const root = probes.readRegistry(entry.hive, entry.key, 'InstallPath')
-    if (root === undefined || !existsAsFile(probes, root)) continue
+    if (root === undefined || !existsAsDirectory(probes, root)) continue
     for (const entry of existingBashOfRoot(root, 'git-for-windows', probes)) push(entry.path, entry.source)
   }
 
   // 3) Git for Windows 默认安装路径。
   for (const template of KNOWN_GIT_ROOTS) {
     const root = expandEnvPath(template, env)
-    if (root === undefined || !existsAsFile(probes, root)) continue
+    if (root === undefined || !existsAsDirectory(probes, root)) continue
     for (const entry of existingBashOfRoot(root, 'git-for-windows', probes)) push(entry.path, entry.source)
   }
 
@@ -371,7 +390,7 @@ export function discoverBash(options: { saved?: string | undefined; probes?: Dis
 
   const candidates: BashCandidate[] = [...merged.values()].map((entry) => {
     const valid = existsAsFile(probes, entry.path)
-    const version = valid ? probes.probeVersion(entry.path) : undefined
+    const version = options.withVersion === true && valid ? probes.probeVersion(entry.path) : undefined
     return {
       path: entry.path,
       source: entry.source,
@@ -402,11 +421,12 @@ export function validateBashPath(path: string, probes: DiscoveryProbes = default
   // bash 工具**（`node.exe -c "echo hi"` 里 `-c` 是 `--check`，什么都不执行，
   // 模型只看到一片空白），属于 AGENTS.md §3.8 那类「不报错、只是永远不对」。
   // 这里只看文件名、不做任何 spawn：Git for Windows / MSYS2 / Cygwin 的 bash 一律叫 bash(.exe)。
+  // 先判存在再判文件名：不存在的路径优先报「找不到文件」，与旧版文案/测试口径一致。
+  if (!existsAsFile(probes, path)) return `找不到文件：${path}`
   const name = basename(path).toLowerCase()
   if (name !== 'bash' && name !== 'bash.exe') {
     return `不是 bash 可执行文件：${path}（文件名应为 bash 或 bash.exe）`
   }
-  if (!existsAsFile(probes, path)) return `找不到文件：${path}`
   return null
 }
 
@@ -424,6 +444,20 @@ export function validateBashPath(path: string, probes: DiscoveryProbes = default
  */
 function existsAsFile(probes: DiscoveryProbes, path: string): boolean {
   return probes.fileExists(resolve(path))
+}
+
+/**
+ * 安装根是否为目录。
+ *
+ * 探测缝没有 `directoryExists` 时退回 `fileExists`，只为兼容旧的自测 fixture；
+ * 生产探测实现必须给出真正的目录判断（否则注册表/默认根扫描会被目录判成文件而跳过）。
+ * @param probes - 探测缝。
+ * @param path - 待判断的安装根。
+ * @returns 是否为目录。
+ */
+function existsAsDirectory(probes: DiscoveryProbes, path: string): boolean {
+  const check = probes.directoryExists
+  return typeof check === 'function' ? check(resolve(path)) : probes.fileExists(resolve(path))
 }
 
 /**

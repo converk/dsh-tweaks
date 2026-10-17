@@ -2,21 +2,29 @@
  * 官方模型行的行内能力控件。
  *
  * 官方 `settings.models.provider-card` 席位只到**提供方卡片**一级，模型行内部
- * 没有扩展点；所以这里在席位挂载后观察卡片子树，把「思考强度 / 多模态」控件
- * 注入到每个模型行展开后的「容量」区域（`_modelAdvanced`），并给官方
- * 「上下文窗口 / 最大输出」输入框加一个 `1M / 128K` 快捷按钮。
+ * 没有扩展点；所以这里在席位挂载后观察卡片子树，把「官方没提供的思考强度」
+ * 和「容量摘要 / 1M·128K」注入到每个模型行展开后的 `_modelAdvanced`。
+ *
+ * 多模态属于官方模型行（`ModelInputTypes`，0.2.0 基线即有），本文件**不再**注入：
+ * 重复注入会和官方草稿打架，也会覆盖继承的图片能力。
+ *
+ * 思考强度的归属**逐行运行期探测**（不按版本号猜、也不按 `declared` 静态一刀切）：
+ * 0.2.1 起官方给 hand-declared pi-ai 路由渲染原生推理控件（DOM 局部名
+ * `_modelReasoning*`），行展开后探测到它就把该行交给官方（只显示「由官方控件管理」
+ * 提示，不产生挂起草稿、不写 `reasoningEfforts`）；0.2.0 没有该组件 → 按原逻辑
+ * 注入插件控件（declared 路由同样补上，否则 0.2.0 的思考编辑会整块消失）。
  *
  * 交互（用户拍板）：
  * - 思考强度用「协议预置」选词表：OpenAI = off/minimal/low/medium/high/xhigh/max，
  *   Anthropic = off/low/medium/high/xhigh/max；两个预置默认都勾 off/low/high/max；
  *   没配置过 `reasoningEfforts` 的模型展开即套用 OpenAI 预置；
  *   一个档都不勾 = 不支持思考（写 `reasoningEfforts: false`）；
- * - 多模态是二选一（仅文本 / 文本+图片），没有「跟随目录」；
- * - 展开模型行时在控件顶部显示该模型**当前**的思考强度 / 多模态 / 上下文 / 输出。
+ * - 展开模型行时在控件顶部显示该模型**当前**的思考强度（或 DeepSeek 提供方级值）
+ *   与上下文 / 输出；多模态只由官方控件显示。
  *
  * 同步时机（与官方卡片自己的草稿共存）：
  * - 官方卡片把模型列表存在自己的 React 草稿里，点「保存」才一次性写 settings；
- *   插件在它写入**之后**再写自己的两个字段，避免被官方草稿用旧值覆盖。
+ *   插件在它写入**之后**再写自己的 `reasoningEfforts`，避免被官方草稿用旧值覆盖。
  * - 因此控件改动先挂起（行内提示「点官方『保存』后写入」）；捕获官方主按钮的
  *   点击，等 `settings/document-updated`（或卡片关闭且官方没有产生写入）后，
  *   用最新 revision 合成一次 `settings.mutate`。
@@ -35,11 +43,12 @@ import {
   getPath,
   isJsonArray,
   listStoredModels,
+  officialManagesRowReasoning,
+  pluginManagesRowReasoning,
   presetLevels,
   reasoningPreset,
 } from './capability.js'
 import type {
-  InputField,
   JsonObject,
   ModelCapabilityDraft,
   ReasoningPresetId,
@@ -58,8 +67,6 @@ export interface AugmentOptions {
   settingsNs: string
   /** owner props 的 `provider.settingsPath`。 */
   settingsPath: readonly string[]
-  /** owner props 的 `provider.declared`。 */
-  declared: boolean | undefined
   /** 插件绑定的 Host 操作与文案。 */
   api: CapabilityApi
 }
@@ -72,8 +79,6 @@ export interface AugmentHandle {
 /** 一行模型行的注入状态。 */
 interface RowState {
   row: HTMLElement
-  /** 行内唯一 id（给多模态 radio 的 name 用）。 */
-  uid: number
   idInput?: HTMLInputElement
   modelId: string
   container?: HTMLElement
@@ -81,7 +86,6 @@ interface RowState {
   presetSelect?: HTMLSelectElement
   levelChecks: Partial<Record<ThinkingLevel, HTMLInputElement>>
   levelInputs: Partial<Record<ThinkingLevel, HTMLInputElement>>
-  inputRadios: { text?: HTMLInputElement; textImage?: HTMLInputElement }
   capacityButton?: HTMLButtonElement
   status?: HTMLElement
   /** 与已存值不同的草稿；undefined = 无挂起改动。 */
@@ -98,6 +102,12 @@ interface RowState {
   preset: ReasoningPresetId
   /** 用户层条目里是否写过 `reasoningEfforts`；没写过 = 展开时套用预置默认。 */
   reasoningConfigured: boolean
+  /**
+   * 本行展开区是否渲染了官方推理控件（运行期探测结果）。
+   * undefined = 还没展开过；false = 官方没渲染该控件（0.2.0 / 0.2.1 的非 declared
+   * 路由 / DeepSeek），pi-ai 行此时由插件补，DeepSeek 走提供方级字段。
+   */
+  officialControl?: boolean
 }
 
 /** 建元素。 */
@@ -156,6 +166,22 @@ function insideOwnControls(node: Node | null): boolean {
     current = current.parentNode
   }
   return false
+}
+
+/**
+ * 官方 hand-declared pi-ai 路由推理控件的 CSS 局部名片段。
+ *
+ * 0.2.1 起官方给 `declared === true` 的 pi-ai 模型行渲染 `ModelReasoningEfforts`
+ * （DOM class 形如 `<hash>_modelReasoningHead` / `<hash>_modelReasoningRow`）；
+ * 0.2.0 的官方产物里没有任何 `modelReasoning` 局部名。归谁管必须按**运行期 DOM
+ * 探测**决定：写死版本号会随官方产物布局漂移而静默失效，静态 `declared` 一刀切
+ * 又会让 0.2.0 的整块思考编辑功能消失。
+ */
+const OFFICIAL_REASONING_FRAGMENT = '_modelReasoning'
+
+/** 行内是否真的渲染了官方推理控件（按行探测；官方行展开后的同一帧子树里）。 */
+function detectOfficialReasoning(row: HTMLElement): boolean {
+  return row.querySelector(`[class*="${OFFICIAL_REASONING_FRAGMENT}"]`) !== null
 }
 
 /** 用户层条目里有没有写过 `reasoningEfforts`（没写过 = 未配置，展开时套用预置默认）。 */
@@ -228,12 +254,20 @@ export function augment(options: AugmentOptions): AugmentHandle {
   const t = api.t
   const settingsNs = options.settingsNs
   const settingsPath = [...options.settingsPath]
-  /** llm-deepseek 的多模态字段叫 inputModalities，且没有每模型思考强度。 */
-  const isDeepSeek = settingsNs === 'llm-deepseek'
-  const inputField: InputField = isDeepSeek ? 'inputModalities' : 'input'
-  const manageReasoning = !isDeepSeek
+  // DeepSeek 的两个官方提供方（api-key / account）都没有每模型思考强度。
+  const isDeepSeek = settingsNs === 'llm-deepseek' || settingsNs === 'llm-deepseek-account'
+
+  /** 本行是否由官方推理控件管理（判定规则在纯逻辑层，便于自测）。 */
+  function officialManaged(state: RowState): boolean {
+    return officialManagesRowReasoning(isDeepSeek, state.officialControl === true)
+  }
+
+  /** 本行是否由插件注入思考强度控件（0.2.0 的 pi-ai 行 / 0.2.1 官方没渲染控件的行）。 */
+  function pluginManaged(state: RowState): boolean {
+    return pluginManagesRowReasoning(isDeepSeek, state.officialControl === true)
+  }
+
   const rows = new Map<HTMLElement, RowState>()
-  let rowUid = 0
   let storedModels = new Map<string, JsonObject>()
   let userSection: unknown = undefined
   let resolvedSection: unknown = undefined
@@ -309,8 +343,6 @@ export function augment(options: AugmentOptions): AugmentHandle {
   function setControlsDisabled(state: RowState, disabled: boolean): void {
     const controls: (HTMLSelectElement | HTMLInputElement | HTMLButtonElement)[] = []
     if (state.presetSelect !== undefined) controls.push(state.presetSelect)
-    if (state.inputRadios.text !== undefined) controls.push(state.inputRadios.text)
-    if (state.inputRadios.textImage !== undefined) controls.push(state.inputRadios.textImage)
     if (state.capacityButton !== undefined) controls.push(state.capacityButton)
     for (const level of THINKING_LEVELS) {
       const check = state.levelChecks[level]
@@ -402,8 +434,9 @@ export function augment(options: AugmentOptions): AugmentHandle {
       }
     }
     const text = t('summary', {
-      reasoning: manageReasoning ? reasoningText(draft) : providerReasoningText(),
-      input: draft.input === 'text+image' ? t('inputTextImage') : t('inputText'),
+      reasoning: pluginManaged(state)
+        ? reasoningText(draft)
+        : officialManaged(state) ? t('reasoningOfficial') : providerReasoningText(),
       context,
       max,
     })
@@ -423,10 +456,6 @@ export function augment(options: AugmentOptions): AugmentHandle {
       wire.disabled = !checked
       wire.value = value ?? ''
     }
-    if (state.inputRadios.text !== undefined) state.inputRadios.text.checked = draft.input === 'text'
-    if (state.inputRadios.textImage !== undefined) {
-      state.inputRadios.textImage.checked = draft.input === 'text+image'
-    }
     if (state.presetSelect !== undefined) state.presetSelect.value = state.preset
     setControlsDisabled(state, !writable)
     updateSummary(state)
@@ -441,8 +470,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
       const wire = state.levelInputs[level]
       if (check?.checked === true) reasoning[level] = wire?.value ?? ''
     }
-    const input = state.inputRadios.textImage?.checked === true ? 'text+image' : 'text'
-    return { reasoning, input }
+    return { reasoning }
   }
 
   /** 任一控件变化：更新挂起草稿与提示。 */
@@ -458,8 +486,9 @@ export function augment(options: AugmentOptions): AugmentHandle {
   /** 展开时控件该显示的草稿：挂起值优先，其次已存值，未配置思考时套用预置默认。 */
   function initialDraftFor(state: RowState): ModelCapabilityDraft {
     const stored = state.stored ?? emptyDraft()
-    if (!manageReasoning || state.reasoningConfigured) return stored
-    return { reasoning: reasoningPreset(state.preset), input: stored.input }
+    // 官方管理的行没有插件档位可勾：一律显示已存值（= 不产生挂起草稿）。
+    if (!pluginManaged(state) || state.reasoningConfigured) return stored
+    return { reasoning: reasoningPreset(state.preset) }
   }
 
   /** 应用初始草稿；未配置思考的模型由此产生挂起改动（= 展开即套用预置）。 */
@@ -479,12 +508,13 @@ export function augment(options: AugmentOptions): AugmentHandle {
     const summary = el('p', 'dshMc_summary')
     summary.dataset.dshMc = 'summary'
 
-    // llm-pi-ai 才有每模型思考强度；llm-deepseek 的思考强度是提供方级的。
+    // 只有插件管理的 pi-ai 行才有每模型思考强度；DeepSeek 是提供方级，
+    // 官方已渲染推理控件的行交给官方。
     let reasoningField: HTMLElement | undefined
     let presetSelect: HTMLSelectElement | undefined
     let levelChecks: Partial<Record<ThinkingLevel, HTMLInputElement>> = {}
     let levelInputs: Partial<Record<ThinkingLevel, HTMLInputElement>> = {}
-    if (manageReasoning) {
+    if (pluginManaged(state)) {
       const field = el('div', 'dshMc_field')
       field.append(el('span', 'dshMc_label', t('reasoning')))
       const preset = selectEl('dshMc_select')
@@ -533,8 +563,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
         state.preset = next
         buildLevels()
         // 切协议：档位行换成该协议的词表，并按预置默认重新勾选（两家都是 off/low/high/max）。
-        const input = state.inputRadios.textImage?.checked === true ? 'text+image' : 'text'
-        applyDraftToControls(state, { reasoning: reasoningPreset(next), input })
+        applyDraftToControls(state, { reasoning: reasoningPreset(next) })
         onControlChanged(state)
       })
 
@@ -544,25 +573,6 @@ export function augment(options: AugmentOptions): AugmentHandle {
       levelChecks = checks
       levelInputs = inputs
     }
-
-    const inputField = el('div', 'dshMc_field')
-    inputField.append(el('span', 'dshMc_label', t('input')))
-    const radios = el('div', 'dshMc_radios')
-    const textRadio = inputEl('radio', '')
-    textRadio.name = `dshMc-input-${String(state.uid)}`
-    textRadio.value = 'text'
-    textRadio.dataset.dshMcField = 'input-text'
-    const textLabel = el('label', 'dshMc_radio')
-    textLabel.append(textRadio, el('span', '', t('inputText')))
-    const imageRadio = inputEl('radio', '')
-    imageRadio.name = `dshMc-input-${String(state.uid)}`
-    imageRadio.value = 'text+image'
-    imageRadio.dataset.dshMcField = 'input-text-image'
-    const imageLabel = el('label', 'dshMc_radio')
-    imageLabel.append(imageRadio, el('span', '', t('inputTextImage')))
-    for (const radio of [textRadio, imageRadio]) radio.addEventListener('change', () => onControlChanged(state))
-    radios.append(textLabel, imageLabel)
-    inputField.append(radios)
 
     const actions = el('div', 'dshMc_actions')
     const capacityButton = buttonEl('dshMc_button', t('capacityPreset'))
@@ -587,15 +597,18 @@ export function augment(options: AugmentOptions): AugmentHandle {
 
     container.append(summary)
     if (reasoningField !== undefined) container.append(reasoningField)
-    else container.append(el('p', 'dshMc_hint', t('reasoningProviderHint')))
-    container.append(inputField, actions)
+    else {
+      container.append(
+        el('p', 'dshMc_hint', t(isDeepSeek ? 'reasoningProviderHint' : 'reasoningOfficialHint')),
+      )
+    }
+    container.append(actions)
 
     state.container = container
     state.summary = summary
     state.presetSelect = presetSelect
     state.levelChecks = levelChecks
     state.levelInputs = levelInputs
-    state.inputRadios = { text: textRadio, textImage: imageRadio }
     state.capacityButton = capacityButton
     state.status = status
   }
@@ -707,7 +720,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
     for (const state of rows.values()) {
       const id = readModelId(state.row)
       state.modelId = id
-      state.stored = draftFromEntry(storedModels.get(id), inputField)
+      state.stored = draftFromEntry(storedModels.get(id))
       state.error = undefined
       if (state.pending === undefined) applyDraftToControls(state, state.stored)
       else {
@@ -753,6 +766,12 @@ export function augment(options: AugmentOptions): AugmentHandle {
     const states: RowState[] = []
     for (const state of rows.values()) {
       if (state.pending === undefined) continue
+      // 探测到官方推理控件的行绝不进入本次写入：不能把插件草稿里的
+      // `reasoningEfforts` 写回官方管理的模型条目（会和官方草稿打架）。
+      if (officialManaged(state)) {
+        state.pending = undefined
+        continue
+      }
       const id = readModelId(state.row) || state.modelId
       if (id.trim().length === 0) continue
       state.modelId = id
@@ -789,8 +808,9 @@ export function augment(options: AugmentOptions): AugmentHandle {
       settingsPath,
       edits,
       visibleModelIds: visibleSnapshot ?? visibleModelIds(),
-      inputField,
-      manageReasoning,
+      // pi-ai 的每模型 reasoningEfforts 仍归插件管（作用域只限真正注入了控件的行，
+      // 官方管理的行已在上面被过滤掉）；DeepSeek 没有每模型字段。
+      manageReasoning: !isDeepSeek,
     })
     if (plan.issues.length > 0) {
       for (const issue of plan.issues) {
@@ -833,7 +853,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
         state.pending = undefined
         state.error = undefined
         state.notice = t('notice')
-        state.stored = draftFromEntry(storedModels.get(state.modelId), inputField)
+        state.stored = draftFromEntry(storedModels.get(state.modelId))
         applyDraftToControls(state, state.stored)
         scheduleNoticeClear(state)
         if (!card.contains(state.row)) rows.delete(state.row)
@@ -897,7 +917,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
     const id = input.value.trim()
     if (id === state.modelId) return
     state.modelId = id
-    state.stored = draftFromEntry(storedModels.get(id), inputField)
+    state.stored = draftFromEntry(storedModels.get(id))
     if (state.pending === undefined) applyDraftToControls(state, state.stored)
     else updateSummary(state)
   }
@@ -921,16 +941,14 @@ export function augment(options: AugmentOptions): AugmentHandle {
         const storedEntry = storedModels.get(initialId)
         state = {
           row,
-          uid: (rowUid += 1),
           modelId: initialId,
           wasNew: initialId === '',
           // 关键：新建行状态时就把用户层已存值读进来，否则展开时控件全是空的。
-          stored: draftFromEntry(storedEntry, inputField),
+          stored: draftFromEntry(storedEntry),
           reasoningConfigured: hasConfiguredReasoning(storedEntry),
           preset: DEFAULT_REASONING_PRESET,
           levelChecks: {},
           levelInputs: {},
-          inputRadios: {},
         }
         rows.set(row, state)
       }
@@ -944,7 +962,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
       if (id !== state.modelId) {
         state.modelId = id
         const storedEntry = storedModels.get(id)
-        state.stored = draftFromEntry(storedEntry, inputField)
+        state.stored = draftFromEntry(storedEntry)
         state.reasoningConfigured = hasConfiguredReasoning(storedEntry)
         if (state.pending === undefined) applyInitialDraft(state)
       }
@@ -952,6 +970,22 @@ export function augment(options: AugmentOptions): AugmentHandle {
       if (advanced === undefined) {
         state.container = undefined
         continue
+      }
+      // 归属运行期探测：官方推理控件与展开区在官方的同一次 React 提交里渲染，
+      // MutationObserver 回调（→ rAF 的 sync）看到的已经是提交后的 DOM，因此
+      // 0.2.1 上第一次注入前就能探测到官方控件（不会出现双份），0.2.0 上没有
+      // 该组件则注入插件控件。万一官方控件晚一帧出现，它本身就是 DOM 变更，
+      // 会再触发 observer → 这里按行重建。
+      const officialControl = detectOfficialReasoning(row)
+      if (state.officialControl !== officialControl) {
+        // 归属切换：官方刚接管 = 丢弃本行草稿（绝不把 reasoningEfforts 写回）；
+        // 插件刚接管 = 用已存值重建控件。
+        state.officialControl = officialControl
+        state.pending = undefined
+        state.error = undefined
+        state.notice = undefined
+        state.container?.remove()
+        state.container = undefined
       }
       if (state.container === undefined || !advanced.contains(state.container)) {
         injectRow(state, advanced)

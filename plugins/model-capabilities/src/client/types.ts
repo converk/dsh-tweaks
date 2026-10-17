@@ -1,8 +1,8 @@
 /**
  * DSH 客户端契约的最小结构类型。
  *
- * 这些类型是对 DSH 真实契约的**结构性窄化投影**（最近一次逐条核对：0.1.7-rc.2
- * 与 0.2.0-rc.2 两份完整安装），只保留本插件实际读取的叶子字段，避免为此
+ * 这些类型是对 DSH 真实契约的**结构性窄化投影**（最近一次逐条核对：0.2.0-rc.2
+ * 与 0.2.1-rc.1 两份完整安装，另抽检 0.2.1-rc.2），只保留本插件实际读取的叶子字段，避免为此
  * import 任何官方包（运行时零依赖）：
  * - `settings.models.provider-card` 的 owner props 与 `ProviderDirectoryEntry`
  *   来自 `@deepseek-ai/dsh-client-ui-settings-models/lib/types/client/{slot-contract,store}.d.ts`；
@@ -15,7 +15,8 @@
  * - `slots` 服务由 `@deepseek-ai/dsh-client-ui-renderer` 以 `super(ctx, "slots")`
  *   提供，`inject(key, cb)` / `register(options, component)` 的实现与 keyed
  *   槽位必须带 `key` 的规则在 `dsh-client-ui-renderer/lib/client.js` 与
- *   `@deepseek-ai/dsh-client-ui-slots`（`SlotCore`，部署里有运行时目录）。
+ *   `@deepseek-ai/dsh-client-ui-slots`（`SlotCore`；0.2.1 起该包不再随完整安装
+ *   发布，内联进 web 前端种子产物）。
  *
  * **inject 注意**：`ctx.remote` 的子命名空间是 cordis Guard 代理，读
  * `ctx.remote.settings` 会被翻译成查询 `remote.settings` 服务；插件必须在
@@ -33,8 +34,6 @@ export interface ProviderDirectoryEntryLike {
   /** 指向 `providers.<route>` 的路径；写入一律用它，不硬编码。 */
   readonly settingsPath: readonly string[]
   readonly active?: boolean
-  /** true = 用户自己声明（目录不 ships）；false = 目录 ships；absent = 适配器不分。 */
-  readonly declared?: boolean
 }
 
 /** `settings.models.provider-card` 的 owner props。 */

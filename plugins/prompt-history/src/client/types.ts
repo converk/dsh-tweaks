@@ -4,8 +4,8 @@
  * 这些类型是对 DSH 真实契约（`@deepseek-ai/dsh-client-ui-slots` /
  * `@deepseek-ai/dsh-client-ui-chat` / `@deepseek-ai/dsh-client-ui-conversation`
  * 的 client contract）的**结构性窄化投影**：只保留本插件实际读取的叶子字段，
- * 避免为此引入对官方包的编译期依赖。字段形状以 DSH **0.1.7-rc.2 与 0.2.0-rc.2** 两份完整安装的
- * `lib/types/client/contract/*.d.ts` 为准（0.2.0 契约审计：本文件读取的全部叶子字段在两版逐字未变）。
+ * 避免为此引入对官方包的编译期依赖。字段形状以 DSH **0.2.1** 完整安装的
+ * `lib/types/client/contract/*.d.ts` 为准（0.2.0 – 0.2.1 契约审计：本文件读取的全部叶子字段未变）。
  * 未受类型保护的运行时依赖（Slot 注入 props、`[data-composer-card]` DOM 判据）见 README §DSH 兼容性。
  */
 
@@ -14,14 +14,6 @@ export type SnapshotSelectorHook<Snapshot> = <Result>(
   select: (snapshot: Snapshot) => Result,
   isEqual?: (a: Result, b: Result) => boolean,
 ) => Result
-
-/** 会话快照中已定稿的节点（只关心用户输入两类）。 */
-export interface PromptMessageLike {
-  /** `user` = 常规用户消息；`steering` = 运行中插入的用户消息。 */
-  readonly kind: 'user' | 'steering'
-  /** 内容块投影；文本块的 `text` 为字符串。 */
-  readonly content: readonly { readonly type: unknown; readonly text?: unknown }[]
-}
 
 /** Chat 目标快照（结构性窄化：只取 legacy 节点数组）。 */
 export interface ChatSnapshotLike {

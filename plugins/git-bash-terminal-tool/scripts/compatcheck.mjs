@@ -51,10 +51,20 @@ function listFiles(dir) {
   return out
 }
 
-/** 把某个包下指定扩展名的文件拼成一段文本（找不到文件时返回 undefined）。 */
-function readPackageText(packageDir, extensions) {
+/**
+ * 把某个包下指定扩展名（可再按文件名收窄）的文件拼成一段文本。
+ * @param packageDir - 包目录。
+ * @param extensions - 扩展名后缀列表。
+ * @param names - 可选：只读文件名以这些后缀结尾的文件。
+ * @returns 拼接文本；没有匹配文件时 undefined。
+ */
+function readPackageText(packageDir, extensions, names) {
   if (!existsSync(packageDir)) return undefined
-  const files = listFiles(packageDir).filter((file) => extensions.some((ext) => file.endsWith(ext)))
+  const files = listFiles(packageDir).filter(
+    (file) =>
+      extensions.some((ext) => file.endsWith(ext)) &&
+      (names === undefined || names.some((name) => file.endsWith(name))),
+  )
   if (files.length === 0) return undefined
   return files.map((file) => readFileSync(file, 'utf8')).join('\n/* ---- */\n')
 }
@@ -76,6 +86,52 @@ const CONTRACTS = [
     pkg: 'dsh-agent',
     ext: ['.js'],
     needles: ['agent/created'],
+  },
+  {
+    // ToolExecution 有 rootCallId，output 可声明 presentationMeta。
+    // 本插件把两者都用于终端卡片（meta.cwd）与 PTC 后台任务的归属。
+    // ⚠️ 不是 0.2.1 才有的：0.2.0-rc.2 的 dsh-tools d.ts 与运行时已齐，0.2.1 只是继续保留，
+    // 所以按 0.2.0 起的**硬契约**查（0.2.0 与 0.2.1 两版都必须齐）。
+    id: 'dsh-tools：rootCallId + presentationMeta（0.2.0 起的执行/呈现契约）',
+    pkg: 'dsh-tools',
+    ext: ['.d.ts'],
+    needles: ['rootCallId: ToolCallId', 'presentationMeta?'],
+  },
+  {
+    // 会话当前目录的 projection：模型用 working_directory 工具 cd 之后，
+    // 终端工具必须从这里取 cwd，不能再用不可变的 session.header.cwd。
+    id: 'dsh-working-directory：ensure + working-directory/change（0.2.1 的当前目录）',
+    pkg: 'dsh-working-directory',
+    ext: ['.d.ts'],
+    since: '0.2.1',
+    needles: ['ensure(agent: Agent', "'working-directory/change'"],
+  },
+  {
+    // 后台任务的创建工具调用（job/registered / job/settled 会话事件）。
+    id: 'dsh-jobs：JobToolCall / toolCall（0.2.1 的任务归属）',
+    pkg: 'dsh-jobs',
+    ext: ['.d.ts'],
+    since: '0.2.1',
+    needles: ['JobToolCall', 'toolCall?: JobToolCall'],
+  },
+  {
+    // 官方终端工具的执行面：本插件逐条镜像它（cwd、presentationMeta、workingDirectory）。
+    id: 'dsh-tool-pwsh：cwd + presentationMeta + workingDirectory（0.2.1 的官方镜像）',
+    pkg: 'dsh-tool-pwsh',
+    ext: ['.js'],
+    since: '0.2.1',
+    needles: ['workingDirectory.ensure', 'presentationMeta', 'cwd'],
+  },
+  {
+    // 0.2.1 的官方 ConfigFormSnapshot 删掉了 mode；客户端若还按 mode === 'host'
+    // 判断可写，整行控件会变灰（本插件曾踩中）。
+    id: 'dsh-client-ui-settings：ConfigFormSnapshot 没有 mode（0.2.1 可写判定）',
+    pkg: 'dsh-client-ui-settings',
+    ext: ['.d.ts'],
+    files: ['config-form-types.d.ts'],
+    since: '0.2.1',
+    needles: ['writable: boolean'],
+    absent: ['readonly mode'],
   },
   {
     id: 'dsh-tools：register / restrict（agent scope 工具面）',
@@ -152,6 +208,19 @@ function declaredEvents(text) {
   return [...text.matchAll(/^\s*'([a-z-]+\/[a-z-]+)'\(/gm)].map((match) => match[1])
 }
 
+/** 比较 DSH 版本（忽略 prerelease 后缀：0.2.1-rc.2 视为 0.2.1）。 */
+function versionAtLeast(version, minimum) {
+  const parse = (value) => String(value).split('-')[0].split('.').map((part) => Number(part))
+  const left = parse(version)
+  const right = parse(minimum)
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const a = left[index] ?? 0
+    const b = right[index] ?? 0
+    if (a !== b) return a > b
+  }
+  return true
+}
+
 /** 检查一个目标目录（DSH 安装目录，或提取出来的包集合）。 */
 function checkTarget(label, root) {
   console.log('\n== ' + label)
@@ -164,27 +233,39 @@ function checkTarget(label, root) {
   console.log('  info dsh-agent ' + version)
 
   for (const contract of CONTRACTS) {
+    if (contract.since !== undefined && !versionAtLeast(version, contract.since)) {
+      console.log('  skip ' + contract.id + '（该契约自 DSH ' + contract.since + ' 起才有）')
+      continue
+    }
     const dir = packageDir(root, contract.pkg)
     if (dir === undefined) {
       check(contract.id, false, '找不到包 ' + contract.pkg)
       continue
     }
-    const text = readPackageText(dir, contract.ext)
+    const text = readPackageText(dir, contract.ext, contract.files)
     if (text === undefined) {
       check(contract.id, false, contract.pkg + ' 下没有 ' + contract.ext.join('/') + ' 文件')
       continue
     }
     const missing = contract.needles.filter((needle) => !text.includes(needle))
-    if (missing.length === 0) {
+    const unexpected = (contract.absent ?? []).filter((needle) => text.includes(needle))
+    if (missing.length === 0 && unexpected.length === 0) {
       check(contract.id, true)
     } else if (contract.optional === true) {
-      // 可选契约（当前为空）：缺失时插件有明确降级路径，只告警、不计失败。
+      // 可选契约只用于「低于最低支持版本（0.2.0）的部署」的诊断性告警：缺失时插件有明确
+      // 降级路径，所以只告警、不计失败。当前契约集里没有可选契约（0.2.0 内必须全绿）。
       optional += 1
-      console.log(
-        '  warn ' + contract.id + ' — ' + missing.map((m) => '缺 "' + m + '"').join('; ') + '（可选：插件会自动降级）',
-      )
+      const details = [
+        ...missing.map((m) => '缺 "' + m + '"'),
+        ...unexpected.map((m) => '不应出现 "' + m + '"'),
+      ]
+      console.log('  warn ' + contract.id + ' — ' + details.join('; ') + '（可选：插件会自动降级）')
     } else {
-      check(contract.id, false, missing.map((m) => '缺 "' + m + '"').join('; '))
+      const details = [
+        ...missing.map((m) => '缺 "' + m + '"'),
+        ...unexpected.map((m) => '不应出现 "' + m + '"'),
+      ]
+      check(contract.id, false, details.join('; '))
     }
   }
 
@@ -206,7 +287,12 @@ function checkTarget(label, root) {
 function fetchVersion(version) {
   const dir = join(cacheRoot, version)
   const scope = join(dir, 'node_modules/@deepseek-ai')
-  for (const pkg of new Set(CONTRACTS.map((contract) => contract.pkg))) {
+  // ⚠️ 先按版本筛契约，再据此决定要 pack 哪些包。否则 --fetch 0.2.0-rc.2 会去拉只在
+  // 0.2.1 才有的包（例如 dsh-working-directory / dsh-tool-pwsh），npm pack 直接 404 崩掉。
+  const applicable = CONTRACTS.filter(
+    (contract) => contract.since === undefined || versionAtLeast(version, contract.since),
+  )
+  for (const pkg of new Set(applicable.map((contract) => contract.pkg))) {
     const dest = join(scope, pkg)
     if (existsSync(join(dest, 'package.json'))) continue
     mkdirSync(dest, { recursive: true })

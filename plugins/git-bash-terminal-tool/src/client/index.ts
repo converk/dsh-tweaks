@@ -37,8 +37,8 @@ export const GENERAL_ITEM_ORDER = 60
  * 1. `webUiSettings`（家族兼容层 `@linxin666/dsh-client-ui-web-ui-settings`，契约与旧
  *    `settingsScope` 相同，按 namespace bind）；
  * 2. `settingsScope`（0.1.5 旧官方通道）；
- * 3. `configForms`（0.1.7 官方原生表单，`get(entryId)` 直接返回同形表单）——
- *    没有家族兼容层的普通 0.1.7 部署靠它。
+ * 3. `configForms`（官方原生表单，`get(entryId)` 直接返回同形表单）——
+ *    没有家族兼容层的普通部署靠它。
  */
 export const inject = ['slots', 'locale']
 
@@ -50,7 +50,7 @@ export const inject = ['slots', 'locale']
  * 这里自己解码，读值只依赖 host 真正存了什么，不受表单 schema 投影的影响。
  *
  * ⚠️ 绑定的 namespace 是 **profile entry id**（`git-bash-terminal-tool`，见
- * `shared/protocol.ts`）：0.1.7 的设置面按 entry id 定位表单，只有 namespace 命中
+ * `shared/protocol.ts`）：设置面按 entry id 定位表单，只有 namespace 命中
  * 一个已服务 entry id 时 `webUiSettings` 才会提升到原生共享表单。
  * @param section - describe 返回的 namespace section。
  * @returns 行需要的值；结构完全不可用时 undefined（保留上一个可用值）。
