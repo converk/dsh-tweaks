@@ -8,8 +8,11 @@
  * 多模态属于官方模型行（`ModelInputTypes`，0.2.0 基线即有），本文件**不再**注入：
  * 重复注入会和官方草稿打架，也会覆盖继承的图片能力。
  *
- * 思考强度由插件自己的「协议预置」UI 管理（0.2.1 官方对 hand-declared pi-ai 路由
- * 也会渲染原生推理控件，但那是官方 UI，插件不探测、不接管、不隐藏）。
+ * 思考强度由插件自己的「协议预置」UI 管理。DSH 0.2.1 起官方还会给
+ * hand-declared pi-ai 路由渲染它自己的原生推理控件（DOM 局部名 `_modelReasoning*`）；
+ * 插件在行内注入成功后给该行打上 `data-dsh-mc-hide-native-reasoning` 标记，
+ * 由 `styles.ts` 的 CSS 把官方那套隐藏，保证一行只出现一套思考强度编辑
+ * （官方草稿与官方「保存」逻辑不受影响）。
  *
  * 交互（用户拍板）：
  * - 思考强度用「协议预置」选词表：OpenAI = off/minimal/low/medium/high/xhigh/max，
@@ -580,6 +583,8 @@ export function augment(options: AugmentOptions): AugmentHandle {
     const container = state.container
     if (container === undefined) return
     advanced.append(container)
+    // 插件已接管这一行的思考强度 UI：标记该行，让样式表隐藏官方原生推理控件。
+    if (manageReasoning) state.row.dataset.dshMcHideNativeReasoning = ''
     applyInitialDraft(state)
     if (activeField !== undefined) {
       const next = container.querySelector<HTMLElement>(`[data-dsh-mc-field="${activeField}"]`)
@@ -984,6 +989,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
       for (const state of rows.values()) {
         if (state.idInput !== undefined) state.idInput.removeEventListener('input', onIdInput)
         state.container?.remove()
+        delete state.row.dataset.dshMcHideNativeReasoning
       }
       rows.clear()
     },

@@ -81,7 +81,7 @@
 
 在「设置 → 模型」的模型行「容量」展开区注入：
 
-- **思考强度**（只有第三方网关 `llm-pi-ai` 有）—— 协议预置 `OpenAI` = off / minimal / low / medium / high / xhigh / max，`Anthropic` = off / low / medium / high / xhigh / max；默认勾 off / low / high / max；一个都不勾 = 不支持思考。插件不区分路由是否 hand-declared：DSH 0.2.1 官方也会给 hand-declared 路由渲染它自己的推理控件（`ModelReasoningEfforts`），本插件不探测、不接管、也不隐藏它，因此这些路由上两套 UI 可能同时出现。
+- **思考强度**（只有第三方网关 `llm-pi-ai` 有）—— 协议预置 `OpenAI` = off / minimal / low / medium / high / xhigh / max，`Anthropic` = off / low / medium / high / xhigh / max；默认勾 off / low / high / max；一个都不勾 = 不支持思考。插件不区分路由是否 hand-declared：DSH 0.2.1 官方也会给 hand-declared 路由渲染它自己的推理控件（`ModelReasoningEfforts`），本插件注入自己的「协议预置」UI 后会按行把官方那套隐藏，保证一行只有一套思考强度编辑。
 - **容量快捷填入** —— 官方「上下文窗口 / 最大输出」输入框旁的 `1M` / `128K` 按钮；新建模型行展开容量时自动填好 1000000 / 131072。
 - 官方 DeepSeek（`llm-deepseek`）没有每模型思考强度（档位是提供方级 `thinking` / `reasoningEffort`），插件只补容量 + 摘要，不提供提供方级面板。
 - 插件**只写 `reasoningEfforts`**，不写 `input` / `inputModalities`，也不重复注入官方已有的多模态控件（官方模型行自 0.2.0 起自带 `ModelInputTypes`）。

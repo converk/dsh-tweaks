@@ -44,14 +44,14 @@
 - 保存失败（比如设置冲突）会原样显示 DSH 报的错，改动会保留，可以再点一次「保存」重试。
 - **只写 `reasoningEfforts`**：插件不写 `input` / `inputModalities`，不会覆盖官方输入类型控件或目录继承的图片能力；也**不再注入多模态控件**（官方模型行自 0.2.0 起就自带）。
 - DeepSeek 的 `thinking` / `reasoningEffort` 是提供方级根字段，插件只在摘要里只读显示当前值，不提供编辑面板（0.1.2 移除了 0.1.1 加的面板）。
-- DSH 0.2.1 起，官方也会给 **hand-declared** 的 `llm-pi-ai` 路由渲染它自己的推理控件（`ModelReasoningEfforts`）；本插件不探测、不接管、也不隐藏它，仍按自己的「协议预置」UI 注入思考强度（与 0.1.x 行为一致），因此这些路由上两套 UI 可能同时出现。
+- DSH 0.2.1 起，官方也会给 **hand-declared** 的 `llm-pi-ai` 路由渲染它自己的推理控件（`ModelReasoningEfforts`）；本插件仍按自己的「协议预置」UI 注入思考强度，并在注入成功后给该行打 `data-dsh-mc-hide-native-reasoning` 标记、由内联 CSS 隐藏官方那套，**保证一行只有一套思考强度编辑**（官方草稿与保存逻辑不受影响）。
 
 ## DSH 兼容性（0.2.0 – 0.2.1）
 
 - **最低支持 DSH 0.2.0**（2026-10 起不再考虑 0.1.7）。
 - 本次核对覆盖两份**完整安装**：**0.2.0-rc.2** 与 **0.2.1-rc.2**（0.2.1-rc.1 也全量核对过）。
 - 核对方式：直接读官方产物（`lib/types/**/*.d.ts` 与已构建的 `lib/client.js`）做逐文件比对；类型看不出的地方再读运行时产物里的真实结构。自测在 0.2.0-rc.2 与 0.2.1-rc.2 两套产物上都是绿的。
-- **0.1.2 的运行期改动**：撤销 0.1.1 针对本插件加入的**非 bug 修复**改动——恢复插件自己的「协议预置」思考 UI（不再探测官方 `ModelReasoningEfforts` 并跳过/接管），删除 `llm-deepseek` / `llm-deepseek-account` 的提供方级 thinking / reasoningEffort 面板与 account 席位；**保留** 0.1.1 的 bug 修复：只写 `reasoningEfforts`、不覆盖官方多模态字段、不重复注入多模态控件、`files` 含 `src` 修类型悬空。
+- **0.1.2 的运行期改动**：撤销 0.1.1 针对本插件加入的**非 bug 修复**改动——恢复插件自己的「协议预置」思考 UI（不再探测官方 `ModelReasoningEfforts` 并跳过/接管），删除 `llm-deepseek` / `llm-deepseek-account` 的提供方级 thinking / reasoningEffort 面板与 account 席位；**保留** 0.1.1 的 bug 修复：只写 `reasoningEfforts`、不覆盖官方多模态字段、不重复注入多模态控件、`files` 含 `src` 修类型悬空。另外，注入自己的预置 UI 后会按行隐藏 0.2.1 官方原生推理控件，避免一行出现两套思考强度编辑。
 - 开发期闸门有 3 处漂移（官方产物路径 / 源码格式变化，不影响插件行为），已在 `scripts/selftest.mjs` 里改成稳健解析 / 结构断言。
 
 | 契约 | 官方产物位置（相对 `<dsh>/node_modules/@deepseek-ai/`） | 0.2.0 → 0.2.1 核对结果 |

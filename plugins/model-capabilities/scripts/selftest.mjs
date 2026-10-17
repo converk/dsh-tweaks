@@ -468,9 +468,18 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
   // 思考强度由插件自己的预置 UI 管理：pi-ai 恒定由插件维护，不跟随官方原生控件。
   assert.ok(augment.includes('const manageReasoning = !isDeepSeek'), 'pi-ai 的每模型 reasoningEfforts 归插件管')
   assert.ok(augment.includes('if (manageReasoning) {'), '放置点按 manageReasoning 建思考控件')
-  assert.equal(augment.includes('_modelReasoning'), false, '不得再探测 / 接管官方原生推理控件')
+  assert.ok(augment.includes('dataset.dshMcHideNativeReasoning'), '注入后给行打标隐藏官方原生推理控件')
+  assert.ok(augment.includes('delete state.row.dataset.dshMcHideNativeReasoning'), '卸载时清理隐藏标记')
   assert.equal(augment.includes('officialManaged'), false, '不得再按官方归属过滤写入')
   assert.equal(clientIndex.includes('llm-deepseek-account'), false, '不得再为 account 路由挂提供方面板')
+
+  // 官方原生推理控件（0.2.1 给 hand-declared 路由渲染）由样式表按行标记隐藏。
+  const styles = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
+  assert.ok(
+    styles.includes('[data-dsh-mc-hide-native-reasoning] [class*="_modelReasoning"]'),
+    '样式表按行标记隐藏官方原生推理控件',
+  )
+  assert.ok(styles.includes('display:none!important'), '隐藏规则必须压过官方 display')
 
   // 0.1.1 起不再注入 / 维护官方已有的多模态控件（官方 ModelInputTypes 负责）。
   assert.equal(augment.includes('dshMc_radios'), false, '不得再注入多模态 radio')
