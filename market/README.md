@@ -12,6 +12,7 @@ git-bash-terminal-tool）——前两个于 2026-09-11 经 PR [#4862](https://gi
 [#5040](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/5040)（已 merge，见上游
 `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`）。
 `turn-file-revert` 已停维护（能力被 DSH 0.2.x 内置），其市场条目于 2026-10 下架移除。
+**smart-list** 于 2026-10-17 提交 PR [#7740](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7740)（单条目的独立 PR，待维护者合并；npm 已发布 0.1.0）。
 **因此日常发版（改代码 → 打 tag 走 CI，见 `AGENTS.md` §6）不需要再提 PR**：条目里没有版本字段，市场按
 `repository.url` + `repository.directory` 关联 npm，自动展示最新版本与下载量。
 只有**改条目元数据**（描述 / 分类）或**新增插件**才需要新开 PR。
@@ -22,20 +23,21 @@ git-bash-terminal-tool）——前两个于 2026-09-11 经 PR [#4862](https://gi
 | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml` | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`（已合并；npm 现为 0.5.0） |
+| `data/plugins/converk__dsh-tweaks--plugins-smart-list.yml` | `data/plugins/converk__dsh-tweaks--plugins-smart-list.yml`（PR #7740 待合并；npm 现为 0.1.0） |
 
-一个 PR **最多 3 条**：现存 3 个条目可一次提交；以后若再新增插件导致超过 3 条，需拆成多个 PR（规范也建议"只提你愿意留下的那几个"）。
+一个 PR **最多 3 条**：现存 4 个条目，新增插件（smart-list）用单独 1 条的 PR 提交；以后若再新增插件导致超过 3 条，需拆成多个 PR（规范也建议"只提你愿意留下的那几个"）。
 
 ## 2. 前置条件（逐条核对）
 
 | 条件 | 状态 |
 |---|---|
-| 每个 `package.json` 声明 `dsh.bundle` + 仓库根有 `cordis.patch.yml` | ✅ 三个都有 |
+| 每个 `package.json` 声明 `dsh.bundle` + 仓库根有 `cordis.patch.yml` | ✅ 四个都有 |
 | 仓库有真实可用代码 | ✅ |
-| 三个包声明 `files` / `repository` / `engines`，且不是 `private` | ✅ |
-| npm 包已发布 | ✅ 四个 npm 包均已上线（`dsh-tweaks-prompt-history` 0.1.1 / `-model-capabilities` 0.1.1 / `-git-bash-terminal-tool` 0.5.0；`-turn-file-revert` 0.1.1 停维护最后版本、已从市场移除；市场收录的三个均需 DSH ≥ 0.2.0） |
-| 仓库加 `dsh-plugin` topic | ⬜ **待做**（GitHub 仓库页 → About 齿轮 → Topics） |
-| 仓库创建满 1 天 | ⏳ 首个提交是 2026-09-10 18:34，**2026-09-11 18:34 之后**提 PR 才会过 CI |
-| 描述与代码相符、无营销词 | ✅ 已按代码核对（描述里的能力/适配器都对得上） |
+| 四个包声明 `files` / `repository` / `engines`，且不是 `private` | ✅ |
+| npm 包已发布 | ✅ 五个 npm 包均已上线（`dsh-tweaks-prompt-history` 0.1.1 / `-model-capabilities` 0.1.1 / `-git-bash-terminal-tool` 0.5.0 / `-smart-list` 0.1.0；`-turn-file-revert` 0.1.1 停维护最后版本、已从市场移除；市场收录的四个均需 DSH ≥ 0.2.0） |
+| 仓库加 `dsh-plugin` topic | ✅ 已加（2026-10 核对 GitHub topics 里有 `dsh-plugin`） |
+| 仓库创建满 1 天 | ✅ 首个提交 2026-09-10，2026-10 提交时早已满足 |
+| 描述与代码相符、无营销词 | ✅ 已按代码核对（smart-list 的描述只讲 Shift+Enter 续号行为） |
 
 ## 3. 提 PR 的步骤
 
@@ -74,7 +76,7 @@ git push -u origin remove-<插件名>
 
 ## 4. 发布 npm 包（打 tag 走 CI，trusted publishing）
 
-**当前状态：四个 npm 包均已发布上线**（`git-bash-terminal-tool` 0.5.0、`model-capabilities` 0.1.1、`prompt-history` 0.1.1、`turn-file-revert` 0.1.1 停维护最后版本）；市场条目只保留前三个，本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
+**当前状态：五个 npm 包均已发布上线**（`git-bash-terminal-tool` 0.5.0、`model-capabilities` 0.1.1、`prompt-history` 0.1.1、`smart-list` 0.1.0、`turn-file-revert` 0.1.1 停维护最后版本）；市场条目已合并三个、smart-list 在 PR #7740 待合并，本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
 
 发布**不要本地 `npm publish`**，一律走 `.github/workflows/publish.yml`（npm trusted publishing / GitHub OIDC，无需 token，带 provenance）。每个包需在 npmjs.com 各配一次 trusted publisher（Provider GitHub Actions / Repository `converk/dsh-tweaks` / Workflow name `publish.yml` / Environment 留空 / Allowed actions npm publish）。发版步骤：
 
@@ -86,6 +88,7 @@ git push origin <插件目录名>/v<版本>
 
 - 推 tag 后 CI 会跑 `tsc --noEmit` + `build.mjs` + selftest/clientsmoke，再 `npm publish --provenance`；tag 与 package.json 版本不一致会直接失败。
 - 首次发布某插件可先在 Actions 页 `publish` → Run workflow 选插件 + `dry_run` 验证。
+- ⚠️ **全新 npm 包名的首次发布**：npm 不支持给「还没发布过的包名」预先配置 trusted publisher。先用本地交互式 `npm publish --access public` 完成首次发布（带 2FA；2026-10 起 npm 默认走 staged publishing：会先生成 `0.0.0-stage` 占位，再按提示 Approve 真实版本），然后 `npm trust github <包名> --file publish.yml --repo converk/dsh-tweaks --allow-publish -y` 配置 OIDC，之后新版本才能靠 tag 触发 CI 自动发布。smart-list 的 0.1.0 就是这样发出去的。
 
 - 发布后市场会**自动关联**：`repository.url` + `repository.directory` 会被拼成
   `converk/dsh-tweaks#path:/plugins/<name>`，正好对上条目的 `/tree/` 地址，于是详情页显示 npm 名与下载量。
@@ -95,7 +98,7 @@ git push origin <插件目录名>/v<版本>
 
 ## 5. 合并之后
 
-- 网站自动重建，`dshmarket` 里出现三个条目；安装命令会长成
+- 网站自动重建，`dshmarket` 里出现四个条目；安装命令会长成
   `dsh plugin --profile web add dsh-tweaks-<name>`（npm 生效后）。
 - 市场详情页会展示 `plugins/<name>/screenshots.json` 里声明的截图（已配好，指向 GitHub 托管的绝对 URL）。
   想换图：更新 `docs/images/` 里的同名 PNG 推上来即可，下一次构建生效，不用再提 PR。

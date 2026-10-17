@@ -68,6 +68,14 @@ composer 是 Lexical 的普通段落 + 软换行（没有列表节点，也不�
 
 ## 安装
 
+已发布到 npm（`dsh-tweaks-smart-list@0.1.0`），直接装：
+
+```powershell
+npx @deepseek-ai/dsh plugin --profile web add dsh-tweaks-smart-list
+```
+
+也可以从本仓库本地路径安装：
+
 ```powershell
 npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\smart-list"
 ```

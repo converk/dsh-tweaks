@@ -69,6 +69,9 @@
 > 普通段落 + 软换行，本插件用纯文本插入 `换行 + 下一个标记` 达到同样的输入体验，
 > 不改文档结构、不碰 `@` 引用 chip。详细原理与兼容性见
 > [`plugins/smart-list/README.md`](./plugins/smart-list/README.md)。
+>
+> **发布状态**：npm [`dsh-tweaks-smart-list@0.1.0`](https://www.npmjs.com/package/dsh-tweaks-smart-list)（CI trusted publishing + provenance）；
+> 插件市场条目已提交 [awesome-dsh-plugin PR #7740](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7740)，等维护者合并后自动出现在市场。
 
 ---
 
