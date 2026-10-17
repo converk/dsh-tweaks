@@ -38,7 +38,7 @@ export interface RowState {
   readonly savedCandidates: readonly string[]
   /** 本次会话里「自动发现」扫到的可用路径（仅内存）。 */
   readonly scanned: readonly string[]
-  /** 设置表单是否可写（memory 模式或未就绪时不可写）。 */
+  /** 设置表单是否可写（宿主快照 `writable` + 已就绪；0.2.1 快照没有 host/memory 之分）。 */
   readonly writable: boolean
   /** 宿主设置服务是否可见（设置表单可写）。 */
   readonly settingsAvailable: boolean
@@ -187,7 +187,9 @@ export function createRowController(
     const value = snapshot.value
     if (value !== undefined) settingsReady = true
     store.setState({
-      writable: snapshot.writable && snapshot.mode === 'host' && snapshot.status === 'ready',
+      // 0.2.1 起官方 ConfigFormSnapshot 删除了 mode（只剩 status/value/base/user/revision/writable），
+      // 写权限只由 writable 表达；0.2.0 的 memory 模式宿主本身就给 writable: false，语义不变。
+      writable: snapshot.writable && snapshot.status === 'ready',
       ...(value !== undefined
         ? { dialect: value.dialect, bashPath: value.bashPath, savedCandidates: value.bashCandidates }
         : {}),

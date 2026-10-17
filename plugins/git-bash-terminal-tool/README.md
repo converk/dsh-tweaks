@@ -52,6 +52,43 @@ KV cache 与历史工具调用都不会错位）。改完开一个新会话即�
 
 ![设置 → 通用 → 终端工具：默认只有 PowerShell（pwsh）与 Git Bash（bash）两个选项，切到 Git Bash 后才出现「Git Bash 路径」与「自动发现」](https://raw.githubusercontent.com/converk/dsh-tweaks/main/docs/images/git-bash-terminal-tool.png)
 
+## 升级到 0.4.1（DSH 0.2.1）
+
+这一版只修一个 **DSH 0.2.1 上的静默失效**：设置行还在，但整行控件被禁用。运行期行为、host 半区、
+设置值格式都不变。
+
+**问题**：DSH 0.2.1 把官方设置快照 `ConfigFormSnapshot` 的 `mode` 字段删了——0.2.0 还有
+`mode: 'host' | 'memory'`，0.2.1 只剩 `status` / `value` / `base` / `user` / `revision` / `writable`。
+0.4.0 判断「设置是否可写」写的是：
+
+```text
+writable = snapshot.writable && snapshot.mode === 'host' && snapshot.status === 'ready'
+```
+
+在 0.2.1 上 `snapshot.mode` 是 `undefined`，整条表达式恒为 `false`：设置行照常渲染
+（所以不是「设置行不见了」这种好排查的现象），但两个工具 chip、「Git Bash 路径」输入框、
+「自动发现」按钮**全部 disabled**，界面不报错、日志也没有异常。用户 profile 的家族兼容层
+（`webUiSettings`）会把设置 promote 到官方原生 `configForms`，快照形状跟着官方走，所以真实中招。
+
+**修复**：写权限只看宿主快照自己的 `writable`：
+
+```text
+writable = snapshot.writable && snapshot.status === 'ready'
+```
+
+- 0.2.0 的 `memory` 模式（remote 进程内偏好）宿主本来就会给 `writable: false`，所以
+  「memory 不可写」的语义不变；0.2.0 的 `host` 模式照常可写。
+- `src/client/types.ts` 的 `SettingsScopeSnapshotLike.mode` 改成**可选**，只为给 0.2.0 /
+  家族兼容层 `webUiSettings` 的快照留一个类型位；业务判据不再读它。
+- `scripts/clientsmoke.mjs` 的假快照全部改成 0.2.1 形状（无 `mode`），并新增 4 条回归断言：
+  ① 0.2.1 原生 `configForms` 快照（无 `mode`）→ chips / 路径栏 / 自动发现可点；
+  ② `writable: false` → 全部 disabled；③ 0.2.0 `memory` 模式（`mode: 'memory'` + `writable: false`）
+  仍 disabled；④ 0.2.0 `host` 模式（带 `mode`）向后兼容仍可写。另加静态断言：源码与构建产物里
+  都不再出现 `snapshot.mode === 'host'`，防止判据回退。
+
+升级后**重启 DSH + 浏览器强制刷新**即可；设置仍存在同一个 entry Config（`dialect` / `bashPath` /
+`bashCandidates`），不需要重新选。**自 0.4.1 起最低支持 DSH 0.2.0**（0.1.7 及更早不再支持）。
+
 ## 升级到 0.4.0（与 DSH 0.2.x 的后台/超时契约对齐）
 
 这一版把工具执行面按 DSH **0.2.0-rc.2** 的官方契约重新对齐，并修掉两个真机上会静默出错的问题。
@@ -71,8 +108,9 @@ The command keeps running in the background. You will be notified when it finish
 ```
 
 `timeoutMs` 的措辞也跟着变（"…on expiry the command moves to the background as a job instead of being killed."）。
-**能力探测**：这套需要注册表齐 `wait` / `read` / `kill` / `remove`（0.2.x 才齐）。缺任何一个
-（例如 DSH 0.1.7）插件**自动退回**「超时即杀」，工具描述也会退回旧措辞——不会因缺方法而报错。
+**能力探测**：这套需要注册表齐 `wait` / `read` / `kill` / `remove`。0.2.0 起官方产物四者俱全，
+自 0.4.1 起这是 **`compatcheck` 的硬契约**（缺任一个即报红）；插件运行期仍保留能力探测做防御式降级——
+万一缺方法会退回「超时即杀」（工具描述同时退回旧措辞），不会报错。
 
 **② 后台任务的输出以前是空的（`job_output` 读不到任何东西）**
 
@@ -120,8 +158,9 @@ C:\Program Files\mingw64\bin ← 不存在（而且 UCRT64 版 Git 用的是 ucr
 - `scripts/selftest.mjs` 不再写死作者机器上的 bash 路径（那是**换机即崩**的写法）：
   改为走发现算法，找不到就把依赖真实路径的断言整段 skip。新增「转后台 / 能力探测 / 输出拉取源 /
   `stopped` / PATH 组装」等回归断言。
-- `scripts/compatcheck.mjs` 新增三条契约（`output` 拉取源、`owner` 解析、`wait/read/kill/remove`），
-  并支持标 `optional: true` 的**可选契约**（缺失只告警、不算失败，供 0.1.7 这类老部署）。
+- `scripts/compatcheck.mjs` 新增三条契约（`output` 拉取源、`owner` 解析、`wait/read/kill/remove`）——
+  当时 `wait/read/kill/remove` 标成可选（缺失只告警、不算失败，给 0.1.7 这类老部署留余地）。
+  **自 0.4.1 起最低支持 0.2.0，这四项已升级为硬契约**（见「DSH 兼容性」）。
 - 顺手修掉 `--fetch` 在 Windows 上的一个真 bug：原来把含盘符的绝对路径交给 `tar`，
   MSYS / GNU tar 会把 `D:` 当成远程主机（`tar: Cannot connect to D: resolve failed`）。
 
@@ -150,6 +189,8 @@ C:\Program Files\mingw64\bin ← 不存在（而且 UCRT64 版 Git 用的是 ucr
   另有一个跑歪的 DSH 实例。
 
 ## 升级到 0.3.3（修复：在 DSH 0.1.6+ 上替换根本没生效）
+
+> ⚠️ 本节是历史记录（当时最低支持 DSH 0.1.7）。**自 0.4.1 起最低支持版本是 DSH 0.2.0。**
 
 0.2.0 ~ 0.3.2 的**替换逻辑在 DSH 0.1.6 之后是死的**（issue #1）：
 设置照常保存、日志照常写、设置行状态正常，但模型**始终只看到 `pwsh`，`bash` 从不出现**。
@@ -216,6 +257,8 @@ bash.exe: *** fatal error - couldn't create signal pipe, Win32 error 5
 
 ## 升级到 0.2.0（DSH 0.1.7）
 
+> ⚠️ 本节是历史记录（0.2.0 版本适配 DSH 0.1.7）。**自 0.4.1 起最低支持版本是 DSH 0.2.0。**
+
 DSH 0.1.7 换了设置模型（旧 `ctx.settings.register` 已不存在），本插件 0.2.0 随之上车：
 
 - 设置从「插件自造的 `terminal-tool` 命名空间」改成**插件 entry 自己的 Config**，
@@ -233,8 +276,27 @@ DSH 0.1.7 换了设置模型（旧 `ctx.settings.register` 已不存在），本
 本版按 DSH **0.1.7-rc.2** 的设置模型实现：host 侧是 volatile Config；浏览器侧优先用家族兼容层的
 `webUiSettings`，没有它就退回官方原生 `configForms.get(entryId)`（所以普通 0.1.7 部署也能用）。
 更旧的 DSH（0.1.5 那套 `ctx.settings.register` / `settingsScope`）请继续用 0.1.0。
-**0.3.3 起的最低支持版本是 DSH 0.1.7**（0.1.5 的 `agent/session-start` 与同步 `confine` 都不再兼容，
-也不打算兼容）。
+**0.3.3 起的最低支持版本是 DSH 0.1.7；自 0.4.1 起最低支持版本改为 DSH 0.2.0**（0.1.5 的
+`agent/session-start` 与同步 `confine` 都不再兼容，也不打算兼容）。
+
+## DSH 兼容性
+
+- **最低支持 DSH 0.2.0**（自 0.4.1 起；0.1.7 及更早不再支持 —— 0.1.5 的 `agent/session-start`
+  与同步 `confine` 早已不兼容，0.1.7 也不再保证）。
+- 本次逐条核对的版本：**0.2.0-rc.2 / 0.2.1-rc.1**（另对 0.2.1-rc.2 抽检了客户端产物）。
+- 结论：
+  - **宿主侧契约在 0.2.1 仍成立**：per-agent 初始化事件 `agent/created`、async `ctx.sandbox.confine`、
+    `tools.restrict` / `tools.register`、`systemPrompt.section`、`ctx.jobs.start` 的 `output` 拉取源 /
+    `owner` 解析 / `wait` `read` `kill` `remove`、entry Config = volatile schemastery。
+    `scripts/selftest.mjs` 与 `scripts/compatcheck.mjs` 都覆盖这些裸字符串契约（0.2.0-rc.2 / 0.2.1-rc.1
+    上均 12/12 通过；`wait` / `read` / `kill` / `remove` 自 0.4.1 起为硬契约）。
+  - **客户端侧唯一真漂移**：0.2.1 的官方设置快照删除了 `mode` 字段——已由 0.4.1 修复（见「升级到 0.4.1」）。
+  - 其余客户端契约（`settings.general.item` 的空 owner props、`slots` / `locale` 服务、设置按 entry id
+    寻址、`webUiSettings` 与原生 `configForms` 的 `get` / `mutate` / `set` / `unset` 用法）在 0.2.1 上
+    本次核对仍然成立。
+- 复跑（插件目录内）：`node scripts/selftest.mjs`、`node scripts/clientsmoke.mjs`；加
+  `DSH_STABLE_HOME=<部署目录>` 会用部署里的真件复核（事件契约 / schema 校验器 / `volatileForm`）。
+  契约漂移闸门：`node scripts/compatcheck.mjs --fetch 0.2.0-rc.2 0.2.1-rc.1`。
 
 ## 极简模式（minimal）的影响
 
@@ -268,7 +330,7 @@ DSH 0.1.7 换了设置模型（旧 `ctx.settings.register` 已不存在），本
 ## 安装
 
 ```powershell
-# 从 npm（推荐；需要 DSH >= 0.1.7）
+# 从 npm（推荐；需要 DSH >= 0.2.0）
 npx @deepseek-ai/dsh plugin --profile web add dsh-tweaks-git-bash-terminal-tool
 
 # 或从本仓库源码（开发调试）
@@ -317,7 +379,7 @@ cmd /c rmdir "$profile\node_modules\dsh-tweaks-git-bash-terminal-tool"
 
 > 这不是包内容的问题：把同一个包 `npm pack` 后在干净工程里 `pnpm add`、或用市场装到没有历史 link 的
 > profile 里都正常。只有「同一个包里既有本地 link、又要换成 registry 版本」时才会踩到。
-> 想少踩：开发调试改用 tarball（`npm pack` 后 `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.4.0.tgz`），
+> 想少踩：开发调试改用 tarball（`npm pack` 后 `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.4.1.tgz`），
 > 它不会留下 junction。
 
 ## 卸载
@@ -432,7 +494,7 @@ node scripts/selftest.mjs        # 发现算法 / 设置 / 升级契约 / 替换
 node scripts/clientsmoke.mjs     # client bundle 协议 + apply + 行组件
 
 # 契约漂移闸门：拿官方产物逐条核对（这里会真的 npm pack 到 .compat-cache/）
-node scripts/compatcheck.mjs --fetch 0.2.0-rc.2
+node scripts/compatcheck.mjs --fetch 0.2.0-rc.2 0.2.1-rc.1
 
 # 让自测用**部署里的**真件复核：dsh-tools 的工具 schema 校验器 + dsh-settings 的 volatileForm（推荐，CI 里可不设）
 DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
@@ -440,7 +502,7 @@ DSH_STABLE_HOME="D:/env/node-global/dsh-stable" node scripts/selftest.mjs
 
 拿**本地目录**调试（`dsh plugin add <本目录>`）会在 profile 里建一个 junction；**换回 npm 正式版之前先把它删掉**，
 否则 `pnpm add` 会以 `ERR_PNPM_EPERM` 失败（原因与判据见「安装 → 装不上？…」）。不想反复删就用 tarball 调试：
-`npm pack` → `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.4.0.tgz`。
+`npm pack` → `dsh plugin add .\dsh-tweaks-git-bash-terminal-tool-0.4.1.tgz`。
 
 设计文档见 [`docs/plans/git-bash-terminal-tool-design.md`](../../docs/plans/git-bash-terminal-tool-design.md)（本地文档，不入库），
 本仓库的开发约定、DSH 契约与通用坑见 [AGENTS.md](../../AGENTS.md)。

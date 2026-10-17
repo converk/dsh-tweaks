@@ -889,7 +889,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
   /**
    * 受限模式：把 argv 交给 `ctx.sandbox.confine`；未受限则原样执行。
    *
-   * ⚠️ `confine` 是 **async**（DSH 0.1.6 起；本插件最低 0.1.7）——必须 await，
+   * ⚠️ `confine` 是 **async**（DSH 0.1.6 起；自 0.4.1 起本插件最低支持 0.2.0）——必须 await，
    * 否则拿到的是 Promise：`argv` 与 `runnerFailureRules` 全是 undefined。
    */
   const confineArgv = async (

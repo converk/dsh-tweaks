@@ -26,7 +26,7 @@ const cacheRoot = join(here, '.compat-cache')
 
 let passed = 0
 let failed = 0
-/** 缺失时插件有降级路径的契约（只告警，不计入 failed）。 */
+/** 缺失时插件有降级路径的契约（只告警，不计入 failed）；当前契约集里没有可选契约。 */
 let optional = 0
 
 /** 一个断言。 */
@@ -127,12 +127,12 @@ const CONTRACTS = [
     needles: ['resolveOwner(session)', 'agents.get(session)'],
   },
   {
-    // 可选的 promote 能力：前台等超时后「转后台」需要 wait/read/kill/remove（0.2.x 才齐）。
-    // 缺任何一个插件都会**自动降级**为「超时即杀」，所以这里只告警、不算失败。
-    id: 'dsh-jobs：wait/read/kill/remove（前台超时转后台；缺则自动降级）',
+    // promote 能力（前台等超时后「转后台」）的硬契约：注册表必须齐 wait/read/kill/remove。
+    // 自 0.4.1 起最低支持 DSH 0.2.0；0.2.0-rc.2 的 dsh-jobs 产物已实测四者俱全，缺任一个即报红。
+    // （插件运行期仍保留能力探测做防御式降级，但兼容闸门按硬契约查。）
+    id: 'dsh-jobs：wait/read/kill/remove（前台超时转后台）',
     pkg: 'dsh-jobs',
     ext: ['.d.ts'],
-    optional: true,
     needles: ['wait(', 'read(', 'kill(', 'remove('],
   },
 ]
@@ -178,7 +178,7 @@ function checkTarget(label, root) {
     if (missing.length === 0) {
       check(contract.id, true)
     } else if (contract.optional === true) {
-      // 可选契约：缺失时插件有明确的降级路径，所以只告警（否则 0.1.7 这种老部署会整片红）。
+      // 可选契约（当前为空）：缺失时插件有明确降级路径，只告警、不计失败。
       optional += 1
       console.log(
         '  warn ' + contract.id + ' — ' + missing.map((m) => '缺 "' + m + '"').join('; ') + '（可选：插件会自动降级）',

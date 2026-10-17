@@ -2,8 +2,8 @@
  * 宿主侧 DSH 契约的**结构性窄化投影**。
  *
  * 本仓库规范（AGENTS.md §3.1）要求插件不引入对官方包的编译期/运行时依赖，
- * 因此这里只保留本插件真正读取的叶子字段。字段形状以官方 **DSH ≥ 0.1.7**（0.1.7-rc.2 与
- * 0.2.0-rc.1/rc.2 的 d.ts + 运行时源码都核对过；本插件最低支持 0.1.7）为准，
+ * 因此这里只保留本插件真正读取的叶子字段。字段形状以官方 **DSH ≥ 0.2.0**（0.2.0-rc.2 与
+ * 0.2.1-rc.1 的 d.ts + 运行时源码都核对过；自 0.4.1 起本插件最低支持 0.2.0）为准，
  * 可用 `node scripts/compatcheck.mjs --fetch <版本>` 复核：
  *
  * - `agent/created` / `Agent.ctx`（事件名常量在 `host/replace.ts`）：`dsh-agent/lib/types/runtime-types.d.ts`
@@ -220,7 +220,7 @@ export interface SandboxProviderLike {
   /**
    * 用 runner 包住 caller 的 argv；无法强制时 fail closed（抛错）。
    *
-   * ⚠️ **async**（DSH 0.1.6 起；本插件最低 0.1.7）：必须 await，否则拿到 Promise。
+   * ⚠️ **async**（DSH 0.1.6 起；自 0.4.1 起本插件最低支持 0.2.0）：必须 await，否则拿到 Promise。
    */
   confine(argv: readonly string[], policy: ConfinedSandboxPolicyLike): Promise<ConfinedArgvLike>
 }

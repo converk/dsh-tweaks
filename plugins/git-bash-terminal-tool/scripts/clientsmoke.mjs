@@ -11,7 +11,9 @@
  * 5. `apply(ctx)` 真的往 `settings.general.item` 注册了一行，id / order / locale 符合预期；
  * 5b. 设置通道名随宿主版本变化：`webUiSettings`（0.1.7 兼容层）/ `settingsScope`（旧宿主）
  *     都能用；都没就绪时改为等 `webUiSettings` 出现再登记；
- * 6. 行组件在**非 win32** 与**平台未知**时不渲染（需求 2），win32 时渲染出来。
+ * 6. 行组件在**非 win32** 与**平台未知**时不渲染（需求 2），win32 时渲染出来；
+ * 7. 设置快照契约：0.2.1 的 configForms 快照删除了 `mode`，写权限只由 `writable` 表达
+ *    （0.4.0 因 `snapshot.mode === 'host'` 判据在 0.2.1 上整行只读，0.4.1 修复）。
  *
  * ⚠️ 测试 renderer 的两个关键模拟（不对齐它们会得到假失败）：
  * - 注册到席位的是 `apply` 里的**包装组件**（只 `createElement(TerminalToolRow, …)` 一次），
@@ -180,11 +182,11 @@ section('apply：注册 settings.general.item')
                   boundNamespaces.push(spec.namespace)
                   boundSpecs.push(spec)
                   return {
+                    // 0.2.1 的 ConfigFormSnapshot 没有 mode（只剩 status/value/base/user/revision/writable）。
                     getSnapshot: () => ({
                       status: 'ready',
                       value: { dialect: 'pwsh', bashPath: '' },
                       writable: true,
-                      mode: 'host',
                       revision: 1,
                       base: undefined,
                       user: undefined,
@@ -254,11 +256,11 @@ function makeApplyCtx(names) {
     bind: (spec) => {
       boundNamespaces.push(spec.namespace)
       return {
+        // 0.2.1 快照形状：没有 mode。
         getSnapshot: () => ({
           status: 'ready',
           value: { dialect: 'pwsh', bashPath: '' },
           writable: true,
-          mode: 'host',
           revision: 1,
           base: undefined,
           user: undefined,
@@ -336,7 +338,8 @@ function makeApplyCtx(names) {
   const registered = []
   const gotEntryIds = []
   const nativeForm = {
-    getSnapshot: () => ({ status: 'ready', value: { dialect: 'bash', bashPath: 'D:/x/bash.exe', bashCandidates: [] }, base: undefined, user: undefined, revision: 1, writable: true, mode: 'host' }),
+    // 0.2.1 原生 ConfigFormSnapshot：有 writable、没有 mode。
+    getSnapshot: () => ({ status: 'ready', value: { dialect: 'bash', bashPath: 'D:/x/bash.exe', bashCandidates: [] }, base: undefined, user: undefined, revision: 1, writable: true }),
     subscribe: () => () => undefined,
     mutate: async () => true,
     set: async () => true,
@@ -382,12 +385,35 @@ function makeApplyCtx(names) {
 section('行组件：渲染闸门与路径栏时机')
 
 /**
- * 挂载行组件，用假的 `/state` + 假的 settingsScope 驱动，返回最终渲染出的树。
+ * 挂载行组件，用假的 `/state` + 假的设置表单驱动，返回最终渲染出的树。
+ *
+ * 渠道默认 `webUiSettings`：0.2.1 用户 profile 里家族兼容层会 promote 到官方原生
+ * configForms，快照形状也就跟着官方走（无 mode）。回归用例可显式切 `configForms` /
+ * `settingsScope` 并覆写快照字段（writable / mode）来锁语义。
  * @param state - 假的 `/state` 响应体。
  * @param settings - 假的设置值；不给就模拟 scope 还没就绪（走 host 快照）。
+ * @param options - `channel`：设置通道；`snapshot`：覆写快照字段。
  * @returns 展平后的元素树。
  */
-async function renderRow(state, settings) {
+async function renderRow(state, settings, options = {}) {
+  const channel = options.channel ?? 'webUiSettings'
+  // 0.2.1 的快照形状：status/value/base/user/revision/writable，没有 mode。
+  const snapshot = {
+    status: 'ready',
+    value: settings,
+    base: undefined,
+    user: undefined,
+    revision: 1,
+    writable: true,
+    ...(options.snapshot ?? {}),
+  }
+  const scope = {
+    getSnapshot: () => snapshot,
+    subscribe: () => () => undefined,
+    mutate: async () => undefined,
+    set: async () => undefined,
+    unset: async () => undefined,
+  }
   memoCache = null
   let wrapper
   const factory = loadFactory(async (url) => ({
@@ -396,36 +422,21 @@ async function renderRow(state, settings) {
     json: async () => (String(url).includes('/state') ? state : { candidates: [] }),
   }))
   factory.factory(factoryRequire).apply({
-    get: (name) =>
-      name === 'slots'
-        ? {
-            inject: (_key, callback) => callback(),
-            register: (_options, component) => {
-              wrapper = component
-              return () => undefined
-            },
-          }
-        : name === 'locale'
-          ? { register: () => () => undefined, bind: () => (key) => key }
-          : name === 'settingsScope'
-            ? {
-                bind: () => ({
-                  getSnapshot: () => ({
-                    status: 'ready',
-                    value: settings,
-                    base: undefined,
-                    user: undefined,
-                    revision: 1,
-                    writable: true,
-                    mode: 'host',
-                  }),
-                  subscribe: () => () => undefined,
-                  mutate: async () => undefined,
-                  set: async () => undefined,
-                  unset: async () => undefined,
-                }),
-              }
-            : undefined,
+    get: (name) => {
+      if (name === 'slots') {
+        return {
+          inject: (_key, callback) => callback(),
+          register: (_options, component) => {
+            wrapper = component
+            return () => undefined
+          },
+        }
+      }
+      if (name === 'locale') return { register: () => () => undefined, bind: () => (key) => key }
+      if (name === channel && channel === 'configForms') return { get: () => scope }
+      if (name === channel) return { bind: () => scope }
+      return undefined
+    },
     effect: (run) => {
       run()
       return () => undefined
@@ -477,6 +488,22 @@ function collect(node, type, out = []) {
   if (typeof node.type === 'string' && node.type === type) out.push(node)
   for (const child of childrenOf(node)) collect(child, type, out)
   return out
+}
+
+/** 树里 class 含指定片段的按钮（本插件用固定类名）。 */
+function buttonWithClass(node, fragment) {
+  return collect(node, 'button').find(
+    (button) => typeof button.props?.className === 'string' && button.props.className.includes(fragment),
+  )
+}
+
+/** 树里所有可交互控件（button / input / select）的 disabled 值。 */
+function disabledStates(node) {
+  const states = []
+  for (const type of ['button', 'input', 'select']) {
+    for (const element of collect(node, type)) states.push(element.props?.disabled)
+  }
+  return states
 }
 
 const linuxTree = await renderRow({
@@ -553,6 +580,93 @@ check(
 )
 const options = collect(selects[0], 'option')
 check('下拉列表列出两条持久化路径', options.length === 2, String(options.length))
+
+// --- 设置快照契约：0.2.1 configForms 快照删除 mode（回归：0.4.0 在 0.2.1 上整行只读）---
+
+section('设置快照契约：0.2.1 configForms 快照没有 mode 仍可写')
+
+const snapshotState = {
+  platform: 'win32',
+  dialect: 'bash',
+  bashPath: '',
+  settingsAvailable: true,
+  capability: { supported: true },
+}
+const snapshotSettings = { dialect: 'bash', bashPath: 'D:/env/msys2/usr/bin/bash.exe', bashCandidates: [] }
+
+/** 行控件是否全部可点：两个 chip、路径输入框、自动发现按钮都 enabled。 */
+function rowControlsEnabled(tree) {
+  if (tree === null || tree === undefined) return false
+  const chips = collect(tree, 'button').filter(
+    (button) => typeof button.props?.className === 'string' && button.props.className.includes('tterm-chip'),
+  )
+  const discover = buttonWithClass(tree, 'tterm-button')
+  const inputs = [...collect(tree, 'input'), ...collect(tree, 'select')]
+  return (
+    chips.length === 2 &&
+    chips.every((chip) => chip.props.disabled === false) &&
+    discover !== undefined &&
+    discover.props.disabled === false &&
+    inputs.length === 1 &&
+    inputs.every((input) => input.props.disabled === false)
+  )
+}
+
+// ① 0.2.1 原生 configForms 快照（无 mode）+ writable:true → 控件可点
+const nativeSnapshotTree = await renderRow(snapshotState, snapshotSettings, { channel: 'configForms' })
+check('0.2.1 原生 configForms（快照无 mode）渲染出行', nativeSnapshotTree !== null && nativeSnapshotTree !== undefined)
+check(
+  '0.2.1 原生 configForms（快照无 mode）→ chips / 路径栏 / 自动发现全可点',
+  rowControlsEnabled(nativeSnapshotTree),
+  JSON.stringify(disabledStates(nativeSnapshotTree)),
+)
+
+// ② writable:false → 控件全部 disabled
+const readOnlySnapshotTree = await renderRow(snapshotState, snapshotSettings, {
+  channel: 'configForms',
+  snapshot: { writable: false },
+})
+const readOnlyStates = disabledStates(readOnlySnapshotTree)
+check(
+  'writable:false（快照无 mode）→ chips / 路径栏 / 自动发现全 disabled',
+  readOnlyStates.length > 0 && readOnlyStates.every((disabled) => disabled === true),
+  JSON.stringify(readOnlyStates),
+)
+
+// ③ 0.2.0 memory 模式快照（mode:memory，宿主本身 writable:false）→ 仍然 disabled
+const memorySnapshotTree = await renderRow(snapshotState, snapshotSettings, {
+  channel: 'settingsScope',
+  snapshot: { writable: false, mode: 'memory' },
+})
+const memoryStates = disabledStates(memorySnapshotTree)
+check(
+  "0.2.0 memory 模式快照（mode:'memory' + writable:false）→ 控件 disabled（语义保持）",
+  memoryStates.length > 0 && memoryStates.every((disabled) => disabled === true),
+  JSON.stringify(memoryStates),
+)
+
+// ④ 0.2.0 host 模式快照（带 mode）仍可写：向后兼容
+const hostSnapshotTree = await renderRow(snapshotState, snapshotSettings, {
+  channel: 'settingsScope',
+  snapshot: { writable: true, mode: 'host' },
+})
+check("0.2.0 host 模式快照（mode:'host'）仍可写（向后兼容）", rowControlsEnabled(hostSnapshotTree))
+
+// 静态防线：写权限判据不能再引用 mode。
+const clientStoreSource = readFileSync(new URL('../src/client/store.ts', import.meta.url), 'utf8')
+const clientTypesSource = readFileSync(new URL('../src/client/types.ts', import.meta.url), 'utf8')
+check(
+  "源码不再用 snapshot.mode === 'host' 判定写权限（0.2.1 快照没有 mode）",
+  !clientStoreSource.includes("snapshot.mode === 'host'") && !clientStoreSource.includes('snapshot.mode'),
+)
+check(
+  '构建产物不再包含 mode 写权限判据（防止回退）',
+  !bundle.includes('mode === "host"') && !bundle.includes("mode === 'host'"),
+)
+check(
+  'types.ts 的 mode 仍是可选（给 0.2.0 / 家族兼容层留类型位）',
+  clientTypesSource.includes("readonly mode?: 'host' | 'memory'"),
+)
 
 check('组件渲染只 require react 种子模块', requested.every((id) => id === 'react' || id === 'react/jsx-runtime'))
 

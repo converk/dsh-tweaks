@@ -4,7 +4,9 @@
  * 与 host/types.ts 同样的纪律（AGENTS.md §3.1）：client bundle 只允许 `require`
  * 页面种子模块（`react` / `react/jsx-runtime`），所以这里不 import 任何
  * `@deepseek-ai/*` 类型包，只按真实契约的形状窄化。字段形状以本机 DSH
- * 0.1.5-rc.1 / 0.1.7-rc.2 部署的 `lib/types/client/**` 为准：
+ * 0.2.0-rc.2 / 0.2.1-rc.1 部署的 `lib/types/client/**` 为准（自 0.4.1 起最低支持 0.2.0；
+ * 0.1.7-rc.2 也核对过，但不再支持）。0.2.1 的漂移：官方设置快照删除了 `mode`，
+ * 见 `SettingsScopeSnapshotLike.mode`：
  *
  * - `slots.inject/register`：`dsh-client-ui-slots/lib/types/client/index.d.ts`
  * - `settings.general.item` 的 owner props 为空：`dsh-client-ui-settings/lib/types/client/contract/slots.d.ts`
@@ -52,7 +54,13 @@ export interface SettingsScopeSnapshotLike<T> {
   readonly user: unknown
   readonly revision: number | undefined
   readonly writable: boolean
-  readonly mode: 'host' | 'memory'
+  /**
+   * 0.2.0 及更早：`host`（同步宿主文档）/ `memory`（remote 进程内）。
+   * **0.2.1 起官方 ConfigFormSnapshot 删除了该字段**（只剩 status/value/base/user/revision/writable），
+   * 这里保留成可选，只为给 0.2.0 桥接层与家族兼容层 `webUiSettings` 的快照留个类型位；
+   * 写权限判据只看 `writable`（见 store.ts）。
+   */
+  readonly mode?: 'host' | 'memory' | undefined
 }
 
 /** 一个 namespace 的客户端 scope。 */
@@ -86,11 +94,14 @@ export interface SettingsScopeSpecLike<T> {
 }
 
 /**
- * 官方 0.1.7 原生设置表单服务（`dsh-client-ui-settings` 的 `configForms`）。
+ * 官方 0.1.7+ 原生设置表单服务（`dsh-client-ui-settings` 的 `configForms`）。
  *
  * `get(entryId)` 返回的 `ConfigForm` 与本文件的 `SettingsScopeLike` 同形
  * （快照 / 订阅 / `mutate` / `set` / `unset`），所以两者可以互换使用：
- * 没有家族兼容层 `webUiSettings` 的普通 0.1.7 部署直接走这条路。
+ * 没有家族兼容层 `webUiSettings` 的普通部署直接走这条路。
+ *
+ * ⚠️ 0.2.1 起快照删除了 `mode`（见 `SettingsScopeSnapshotLike.mode`）：快照形状变了，
+ * `get` / `mutate` / `set` / `unset` 的用法没变。
  */
 export interface ConfigFormsLike {
   /** 取一个 profile entry 的表单；entry 尚未被服务时可能抛错（调用方判空/兜底）。 */
