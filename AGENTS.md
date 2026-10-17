@@ -42,6 +42,7 @@ plugins/<name>/
 │                    # ⚠️ 按需：不是每个插件都有 scripts/，也不是每个都有这三个
 │                    #    实测：git-bash＝三个都有，model-capabilities＝selftest，
 │                    #    prompt-history＝selftest（2026-10 基线核对时补上），
+│                    #    smart-list＝selftest（纯 UI：bundle 协议 + 纯逻辑 + 假 DOM 组件行为），
 │                    #    turn-file-revert＝clientsmoke + selftest（停维护，不再跟进）
 └── src/
     ├── index.ts     # host 半区（纯 UI 插件 = 空 apply；有设置则导出 Config + apply(ctx, config)）
@@ -70,11 +71,12 @@ plugins/<name>/
 | 插件 | 状态 | 支持的 DSH 版本 |
 |---|---|---|
 | `prompt-history` | 维护中 | 0.2.0 – 0.2.1（**0.1.1**：多段文本换行防御性修复、`Shift+↑/↓` 放行、补纯逻辑自测） |
+| `smart-list` | 维护中 | 0.2.0 – 0.2.1（**0.1.0**：初版，Shift+Enter 后自动续写列表标记；用 `insertText` 插入 `\n + 标记`，不重写草稿） |
 | `model-capabilities` | 维护中 | 0.2.0 – 0.2.1（**0.1.1**：删除与官方重复的多模态控件；declared pi-ai 路由按官方 `ModelReasoningEfforts` 运行期探测；只写 `reasoningEfforts`；补 `llm-deepseek` / `llm-deepseek-account` 提供方级面板） |
 | `git-bash-terminal-tool` | 维护中 | 0.2.0 – 0.2.1（**0.5.0**：安装根目录探测 / 文件名校验 / 半注册回滚 / `/state` 失败降级 / 不默认探测版本 / cwd 跟随 `working_directory`；**0.4.1** 已发布，修 0.2.1 的设置行只读） |
 | `turn-file-revert` | **已停止维护（2026-09；2026-10 已从插件市场移除）** | **只到 0.2.0，不再跟进** |
 
-**最低支持 DSH 0.2.0**（0.1.7 已不支持；0.2.1 是契约基线与核对口径）。2026-10 合并 PR #3 后的版本事实：`git-bash-terminal-tool` **0.5.0**（按 0.2.1 契约对齐运行期 + 审计修复）、`model-capabilities` **0.1.1**、`prompt-history` **0.1.1**；三者都继续支持 **0.2.0 – 0.2.1**（各插件增量见上表）。`git-bash-terminal-tool` 的 **0.4.1** 已发布（修 0.2.1 删除 `ConfigFormSnapshot.mode` 导致的设置行只读），0.5.0 已包含该修复。
+**最低支持 DSH 0.2.0**（0.1.7 已不支持；0.2.1 是契约基线与核对口径）。2026-10 合并 PR #3 后的版本事实：`git-bash-terminal-tool` **0.5.0**（按 0.2.1 契约对齐运行期 + 审计修复）、`model-capabilities` **0.1.1**、`prompt-history` **0.1.1**、`smart-list` **0.1.0**；四者都继续支持 **0.2.0 – 0.2.1**（各插件增量见上表）。`git-bash-terminal-tool` 的 **0.4.1** 已发布（修 0.2.1 删除 `ConfigFormSnapshot.mode` 导致的设置行只读），0.5.0 已包含该修复。
 
 **`turn-file-revert` 的例外规则（强制）**：该能力官方 DSH 0.2.x **已内置**（回合改动卡片 + 逐文件 diff 复核），所以本仓库从 2026-09 起停止维护。之后的 DSH 升级、契约审计、兼容性核对、CI、发布**一律忽略这个插件**——只保证到 **0.2.0**，在更新的 DSH 上不保证可用也不再修；版本号停在 `0.1.1`（已作为最后一次发布发出）：不要再 bump、不要打 tag / 发布、不要加进任何 profile 的 `dsh.profile.bundles`；该插件已从插件市场（awesome-dsh-plugin）下架（2026-10）：不要再把它加回 `market/`，也不要向上游市场提条目。源码与 README 保留只作参考（DOM 增补写法仍有教学价值），但**不要「顺手修一下」**，也不要为它改仓库其他部分。唯一例外：它**阻塞**了其他插件或 DSH 本身（如依赖冲突）时才允许最小处置，并在提交信息里写明原因。
 
@@ -112,7 +114,7 @@ plugins/<name>/
 - session 作用域 Slot 会注入标准 props（按需判空）：`sessionId`、`useChat`、`useSession`、`useInput`、`inputActions`、`useProjection`…；选择器要返回**引用稳定**的值，否则每次 store 变化都重渲染。
 - 常用席位：`conversation.input.overlay`（composer 卡片内浮层，纯 UI 首选）/ `conversation.input.left|right` / `conversation.input.dock` / `conversation.chat.node`（keyed）/ `conversation.chat.turnTail` / `conversation.chat.assistant-actions` / `settings.models.provider-card`（keyed）/ `settings.general.item` / `settings.section`。
 - ⚠️ **别猜 kind**：整份 Slot 目录（**0.2.1 是 100 个席位**——0.2.0 是 90 条，均按 `CLIENT_SLOT_API` 条数实测；带 `kind` / `scope` / `occupants` / `replaceRisk` / `declaredBy` / `source`）就在部署里，读法见 §3.9。实测 `chain` 只有三个：`conversation.composer`、`shell.quota-notice`、`sidebar.right.tab.guide`——**其余都不是独木桥**，`list` 席位新 `id` 就能加条目、`keyed` 席位按 `key` 替换。
-- 输入区：composer 是 **contenteditable（Lexical）不是 textarea**，改草稿只能走 `inputActions.setDraft(text)`；键盘拦截配方（document 捕获相 + `[data-composer-card]` 限定作用域 + 避开 IME + 查 `phase === 'plain'` + preventDefault）见 `plugins/prompt-history/src/client/overlay.tsx`。Chat 快照取 `useChat((s) => s.legacy.nodes)`，用户输入是 `kind === 'user' | 'steering'` 节点里的 text 块。
+- 输入区：composer 是 **contenteditable（Lexical）不是 textarea**。改草稿有两条官方路径：**整段替换**用 `inputActions.setDraft(text)`；**在光标处插入纯文本**（不破坏 @ 引用 / 命令 chip、不动后续内容）用 `inputActions.captureInsertion()` 拿带 `draftRev` 的 `TokenSpan`，再 `inputActions.insertText(text, span)`——文本里的字面 `\n` 就是换行（composer CSS 是 `white-space: pre-wrap`，官方粘贴路径也这么插多行文本）。键盘拦截配方（document 捕获相 + `[data-composer-card]` 限定作用域 + 避开 IME + 查 `phase === 'plain'` + preventDefault）见 `plugins/prompt-history/src/client/overlay.tsx`；**要接管 Shift+Enter 还得 `stopPropagation`**——Lexical 的 `KEY_ENTER_COMMAND`（优先级 0）会自己再插一个软换行，见 `plugins/smart-list/src/client/overlay.tsx`。Chat 快照取 `useChat((s) => s.legacy.nodes)`，用户输入是 `kind === 'user' | 'steering'` 节点里的 text 块。
 - ✅ **「本轮文件改动」那一行在 `conversation.chat.turnTail`——它是 `list` 席位，不是 chain**（2026-10 在 `0.2.0-rc.2` 与 `0.2.1-rc.1` 两个部署上核对，两版都是 `list` + `replaceRisk: 'none'`）：官方 `dsh-client-ui-deliverables` 只是**其中一个条目**（`id: '@deepseek-ai/dsh-client-ui-deliverables'`），同席还有 `client-ui-plan PlanCards`、`client-ui-schedule ScheduleTurnCard`。⇒ **想自己加一行，直接 `slots.register({ name: 'conversation.chat.turnTail', id: '<自己的 id>', order }, …)`**——新 `id` 就是新条目，与官方那行并列（复用官方 `id` 才是替换它）。**不要**再为此走 DOM 增补。
 - **DOM 增补只在确实没有席位时用**（写法参考 `plugins/turn-file-revert/src/client/augment.ts`）：在 session 作用域 Slot 注册隐藏锚点拿 `sessionId`，再观察转写区把自有元素插到官方产物行之后。稳定判据（**别用哈希类名**）：`[data-turn-tail="<turn>"]`、`[data-chat-turn]`、`[data-actions-reveal]`（只在 `closing !== null` 分支写，值 `endsWithResponse ? "always" : "hover"` → 可当「回合已收尾、动作条已渲染」的判据）、`[data-changed-files]`（官方改动卡片）、`[data-presented-files-row]`（present 的交付文件行）；⚠️ `[data-produced-files-row]` **不存在于任何官方产物**——选任何 DOM 判据前先在部署里 grep 一遍（读法见 §3.9）。
 - DOM 增补纪律：自有元素带统一标记属性（如 `data-dsh-tfr`）；`MutationObserver` 忽略自身写入、按判据**幂等重新定位**；先过滤「变更是否落在 turn-tail 子树内」以免流式输出每帧触发；停止时移除全部自有 DOM。
@@ -221,7 +223,7 @@ node scripts/clientsmoke.mjs     # 浏览器半区冒烟（有则写）
 - 改完至少跑 `tsc --noEmit` + `node scripts/selftest.mjs`（有 client 半区再加 clientsmoke，有宿主契约再加 compatcheck）；改契约相关代码时**顺带补一条能抓住本次回归的断言**。
 - **让自测用真件**：`DSH_STABLE_HOME` 指向完整部署（`git-bash-terminal-tool` 的 selftest 用它复核事件契约 / 工具 schema / `volatileForm` 等真件）；没有完整部署时，`DSH_SETTINGS_ENTRY` / `DSH_SCHEMASTERY_ENTRY` 可以直接指到单包产物（terminal selftest 已支持）。文档与脚本里不要写本机不存在的源码路径；CI 上没有部署就跳过官方产物段，**不要为了绿而弱化断言**。
 - **防漂移**：有宿主的插件带 `scripts/compatcheck.mjs`（`node scripts/compatcheck.mjs --fetch <版本> …`；升级核对的矩阵示例：`--fetch 0.2.0-rc.2 0.2.1-rc.1`，需要时再加 `0.2.1-rc.2`），拿官方产物逐条核对事件名 / 方法签名 / 服务形状；自测里**必须**对事件名等裸字符串有断言——裸字符串等于没测。契约分**硬**与**可选**两类：`optional: true` 只用于「低于最低支持版本（0.2.0）的部署」的诊断性告警，**最低支持版本内必须全绿**。`git-bash-terminal-tool` 的 `jobs.wait/read/kill/remove`（超时转后台）自 2026-10 起是**硬契约**（0.2.0 起就齐）；运行期仍保留「缺失则退回超时即杀」的防御性降级，但不再作为支持承诺。
-- 纯 UI 插件同样要有 `scripts/selftest.mjs`：把官方产物原文/结构（Slot 声明、标准 props、locale 签名、运行时 DOM 邻接）钉成断言；**无 DSH 部署时跳过官方产物段**（CI 友好）。参考 `plugins/prompt-history/scripts/selftest.mjs` 与 `plugins/model-capabilities/scripts/selftest.mjs`。官方产物路径按包 `exports` 解析，别写死 `lib/client.js`（0.2.1 的 gateway 已拆 browser/node）。
+- 纯 UI 插件同样要有 `scripts/selftest.mjs`：把官方产物原文/结构（Slot 声明、标准 props、locale 签名、运行时 DOM 邻接）钉成断言；**无 DSH 部署时跳过官方产物段**（CI 友好）。参考 `plugins/prompt-history/scripts/selftest.mjs` 与 `plugins/model-capabilities/scripts/selftest.mjs`；**有键盘 / DOM 交互的纯 UI 插件**再加一层「假 DOM + vm 驱动组件」的行为断言（不装 react、不开浏览器就能测按键接管与放行），参考 `plugins/smart-list/scripts/selftest.mjs`。官方产物路径按包 `exports` 解析，别写死 `lib/client.js`（0.2.1 的 gateway 已拆 browser/node）。
 - 快速预览交互可用会话内动态 Cordis 插件（`cordis_define` / `cordis_run` / `cordis_undefine`），但落地交付一律以本仓库的 TS 包为准，**两者不要同时挂同一 Slot**。
 - 核对 client 半区是否进了启动图（免浏览器）：用只含 Host 半区的动态插件注册工具返回 `ctx.get('clientModules').graph().entries` 与 `clientPath('<包名>')`；动态沙箱**不允许**读 `connection` 这类返回 cordis Context 的服务。
 

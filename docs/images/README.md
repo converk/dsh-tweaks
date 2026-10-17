@@ -5,6 +5,7 @@
 | 文件 | 所属插件 | 内容 |
 |---|---|---|
 | `prompt-history.png` | prompt-history | 输入框浏览历史时的 `↑↓ 历史 n/N` 角标 |
+| `smart-list.png` | smart-list | 输入框里连续 Shift+Enter 时列表自动 1 → 2 → 3 续号 |
 | `model-capabilities-third-party.png` | model-capabilities | `llm-pi-ai` 模型行展开：思考强度选 OpenAI 预置（7 档，默认勾 off/low/high/max）+ 多模态 + 1M/128K |
 | `model-capabilities-official.png` | model-capabilities | `llm-deepseek` 模型行展开：提供方级思考档位提示 + 多模态 + 1M/128K |
 | `turn-file-revert-modified.png` | turn-file-revert | 本轮有改动：`本轮改动情况：` 统计 + 可点的「撤回全部修改」 |

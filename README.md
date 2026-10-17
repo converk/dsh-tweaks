@@ -2,13 +2,14 @@
 
 给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
 
-> 适配 DSH **0.2.1**（最低 0.2.0）；本仓库当前版本：`git-bash-terminal-tool` **0.5.0**、`model-capabilities` **0.1.1**、`prompt-history` **0.1.1**。
+> 适配 DSH **0.2.1**（最低 0.2.0）；本仓库当前版本：`git-bash-terminal-tool` **0.5.0**、`model-capabilities` **0.1.1**、`prompt-history` **0.1.1**、`smart-list` **0.1.0**。
 
 ---
 
 ## 目录
 
 - [prompt-history —— 输入框里的历史提示词](#prompt-history--输入框里的历史提示词)
+- [smart-list —— 输入框里的列表自动续号](#smart-list--输入框里的列表自动续号)
 - [model-capabilities —— 给模型行补上「思考强度 / 容量」](#model-capabilities--给模型行补上思考强度--容量)
 - ~~[turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)~~
   —— **已弃用并停止维护**：功能已由官方提供（DSH 0.2.x 自带的回合改动卡片 + 逐文件 diff 复核），
@@ -38,6 +39,36 @@
 > 只有输入框为空时才会接管 ↑，不会跟 `/` 命令菜单、`@` 引用菜单打架；历史只属于当前会话，刷新页面也还在。
 >
 > **0.1.1**：多段文本块的历史提取改用换行连接（不再粘成一串）；`Shift+↑` / `Shift+↓` 不再被历史召回拦截，留给编辑器自己做选择；`scripts/selftest.mjs` 补了纯逻辑断言（提取、去重、上限、多段文本）。
+
+---
+
+## smart-list —— 输入框里的列表自动续号
+
+**它能做什么**
+
+在输入框里写「1. … 2. … 3. …」这类列表时，按 **Shift+Enter** 换行后自动补上下一个编号，不用自己敲 `2.`、`3.`。
+
+**怎么用**
+
+1. 输入第一条：`1. 第一件事`（也支持 `1) `、`1、`、`1）`，以及 `- ` / `* ` / `+ ` / `• ` 无序列表）。
+2. 按 **Shift+Enter**：新的一行自动出现 `2. `，直接接着写第二项。
+3. 继续 Shift+Enter 会依次出现 `3. `、`4. `……写完正常按 Enter 发送。
+
+```
+1. 把 DSH 0.2.1 的契约核对一遍
+2. 给 smart-list 补上列表自动续号的用例
+3. 写 README 并测试安装
+```
+
+![在输入框里连续按 Shift+Enter，列表自动 1 → 2 → 3 续号](docs/images/smart-list.png)
+
+> 只接管 **Shift+Enter**（普通 Enter 仍是发送）；输入法组合期、有选区、`@` / `/` 菜单都不受影响。
+> 缩进、前导零都会保留；空条目（`2. ` 后面没内容）只换行、不再续号。
+>
+> 和 Codex / ChatGPT 的「列表块」不同：那边是富文本列表 marker，DSH 的 composer 是
+> 普通段落 + 软换行，本插件用纯文本插入 `换行 + 下一个标记` 达到同样的输入体验，
+> 不改文档结构、不碰 `@` 引用 chip。详细原理与兼容性见
+> [`plugins/smart-list/README.md`](./plugins/smart-list/README.md)。
 
 ---
 
@@ -145,12 +176,14 @@ Windows 上 DSH 默认让模型用 PowerShell（工具名 `pwsh`）执行命令�
 ## 安装
 
 下载本仓库，然后安装需要的插件。各插件互相独立，下方以 **prompt-history** 为例，把名称换成
-对应插件所在目录名（如 `model-capabilities`、`turn-file-revert`、`git-bash-terminal-tool`）即可：
+对应插件所在目录名（如 `smart-list`、`model-capabilities`、`turn-file-revert`、`git-bash-terminal-tool`）即可：
 
 ```
 npx @deepseek-ai/dsh plugin --profile web add "<仓库目录>/plugins/prompt-history"
 ```
 
 安装完成后重启 DSH，并在浏览器中强制刷新（`Ctrl + Shift + R`）。
+
+> 纯浏览器半区的插件（如 `smart-list`）安装后刷新浏览器即可，不需要重启 DSH 宿主。
 
 > `<仓库目录>` 指你把本仓库下载（克隆）到的目录；`web` 为 DSH 的 profile 名称，其配置在 DSH 主目录下的 `profiles/` 里：默认即用户目录下的 `~/.dsh`（Windows 为 `%USERPROFILE%\.dsh`），若设置了 `DSH_HOME` 则以其为准。
