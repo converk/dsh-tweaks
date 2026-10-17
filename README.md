@@ -2,7 +2,7 @@
 
 给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
 
-> 适配 DSH **0.2.1**（最低 0.2.0）；本仓库当前版本：`git-bash-terminal-tool` **0.5.0**、`model-capabilities` **0.1.2**、`prompt-history` **0.1.1**、`smart-list` **0.1.0**。
+> 适配 DSH **0.2.1**（最低 0.2.0）；本仓库当前版本：`git-bash-terminal-tool` **0.5.0**、`prompt-history` **0.1.1**、`smart-list` **0.1.0**。
 
 ---
 
@@ -10,7 +10,9 @@
 
 - [prompt-history —— 输入框里的历史提示词](#prompt-history--输入框里的历史提示词)
 - [smart-list —— 输入框里的列表自动续号](#smart-list--输入框里的列表自动续号)
-- [model-capabilities —— 给模型行补上「思考强度 / 容量」](#model-capabilities--给模型行补上思考强度--容量)
+- ~~[model-capabilities —— 给模型行补上「思考强度 / 容量」](#model-capabilities--给模型行补上思考强度--容量)~~
+  —— **已弃用并停止维护**：DSH 0.2.1 官方已原生提供模型行的输入类型控件与 hand-declared
+  路由的推理等级控件，插件剩余增量不足；已从插件市场下架，本机安装也已卸载
 - ~~[turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)~~
   —— **已弃用并停止维护**：功能已由官方提供（DSH 0.2.x 自带的回合改动卡片 + 逐文件 diff 复核），
   最后一个支持版本 **0.2.0**
@@ -76,6 +78,9 @@
 ---
 
 ## model-capabilities —— 给模型行补上「思考强度 / 容量」
+
+> **⚠️ 已弃用：DSH 0.2.1 官方已原生提供模型行的输入类型控件与 hand-declared 路由的推理等级控件，本插件停止维护。**
+> 已从插件市场下架，本机安装也已卸载。最后版本 **0.1.2**（本地未发布，npm 最后发布为 **0.1.1**），不再发版；源码保留只作参考。
 
 **它能做什么**
 
@@ -179,7 +184,7 @@ Windows 上 DSH 默认让模型用 PowerShell（工具名 `pwsh`）执行命令�
 ## 安装
 
 下载本仓库，然后安装需要的插件。各插件互相独立，下方以 **prompt-history** 为例，把名称换成
-对应插件所在目录名（如 `smart-list`、`model-capabilities`、`turn-file-revert`、`git-bash-terminal-tool`）即可：
+对应插件所在目录名（如 `smart-list`、`prompt-history`、`git-bash-terminal-tool`）即可：
 
 ```
 npx @deepseek-ai/dsh plugin --profile web add "<仓库目录>/plugins/prompt-history"

@@ -40,7 +40,7 @@ plugins/<name>/
 ├── pnpm-workspace.yaml + pnpm-lock.yaml
 ├── scripts/*.mjs    # selftest（宿主 + 纯逻辑）、clientsmoke（bundle 协议 + apply）、compatcheck（契约漂移）
 │                    # ⚠️ 按需：不是每个插件都有 scripts/，也不是每个都有这三个
-│                    #    实测：git-bash＝三个都有，model-capabilities＝selftest，
+│                    #    实测：git-bash＝三个都有，model-capabilities（停维护）＝selftest，
 │                    #    prompt-history＝selftest（2026-10 基线核对时补上），
 │                    #    smart-list＝selftest（纯 UI：bundle 协议 + 纯逻辑 + 假 DOM 组件行为），
 │                    #    turn-file-revert＝clientsmoke + selftest（停维护，不再跟进）
@@ -72,13 +72,15 @@ plugins/<name>/
 |---|---|---|
 | `prompt-history` | 维护中 | 0.2.0 – 0.2.1（**0.1.1**：多段文本换行防御性修复、`Shift+↑/↓` 放行、补纯逻辑自测） |
 | `smart-list` | 维护中 | 0.2.0 – 0.2.1（**0.1.0**：初版，Shift+Enter 后自动续写列表标记；用 `insertText` 插入 `\n + 标记`，不重写草稿） |
-| `model-capabilities` | 维护中 | 0.2.0 – 0.2.1（**0.1.2**：删掉 0.1.1 的 DeepSeek/account 提供方级面板；思考强度按「官方有的我们就不提供」收敛——按行运行期探测官方 `ModelReasoningEfforts`，官方已渲染的行不提供插件 UI（只留摘要 / 容量 / 提示），官方没有的行才显示插件「协议预置」UI；保留只写 `reasoningEfforts`、不重复官方多模态的修复。**0.1.1**：删除与官方重复的多模态控件；只写 `reasoningEfforts`） |
+| `model-capabilities` | **已停止维护（2026-10；已从插件市场移除、本机安装已卸载）** | **只到 0.2.1，不再跟进**（仓库最后版本 0.1.2 未发布；npm 最后发布 0.1.1） |
 | `git-bash-terminal-tool` | 维护中 | 0.2.0 – 0.2.1（**0.5.0**：安装根目录探测 / 文件名校验 / 半注册回滚 / `/state` 失败降级 / 不默认探测版本 / cwd 跟随 `working_directory`；**0.4.1** 已发布，修 0.2.1 的设置行只读） |
 | `turn-file-revert` | **已停止维护（2026-09；2026-10 已从插件市场移除）** | **只到 0.2.0，不再跟进** |
 
-**最低支持 DSH 0.2.0**（0.1.7 已不支持；0.2.1 是契约基线与核对口径）。2026-10 合并 PR #3 后的版本事实：`git-bash-terminal-tool` **0.5.0**（按 0.2.1 契约对齐运行期 + 审计修复）、`model-capabilities` **0.1.2**（删掉 PR 的提供方级面板等非 bug 修复改动、思考强度按「官方有的不提供」收敛，保留 bug 修复；npm 上最新仍是 0.1.1）、`prompt-history` **0.1.1**、`smart-list` **0.1.0**；四者都继续支持 **0.2.0 – 0.2.1**（各插件增量见上表）。`git-bash-terminal-tool` 的 **0.4.1** 已发布（修 0.2.1 删除 `ConfigFormSnapshot.mode` 导致的设置行只读），0.5.0 已包含该修复。
+**最低支持 DSH 0.2.0**（0.1.7 已不支持；0.2.1 是契约基线与核对口径）。2026-10 现状：维护中的插件为 `git-bash-terminal-tool` **0.5.0**（按 0.2.1 契约对齐运行期 + 审计修复）、`prompt-history` **0.1.1**、`smart-list` **0.1.0**，三者都继续支持 **0.2.0 – 0.2.1**（各插件增量见上表）；`model-capabilities` 已停维护（仓库版本 0.1.2 未发布、npm 最后发布 0.1.1，DSH 0.2.1 官方已原生提供同类控件），`turn-file-revert` 只到 0.2.0。`git-bash-terminal-tool` 的 **0.4.1** 已发布（修 0.2.1 删除 `ConfigFormSnapshot.mode` 导致的设置行只读），0.5.0 已包含该修复。
 
 **`turn-file-revert` 的例外规则（强制）**：该能力官方 DSH 0.2.x **已内置**（回合改动卡片 + 逐文件 diff 复核），所以本仓库从 2026-09 起停止维护。之后的 DSH 升级、契约审计、兼容性核对、CI、发布**一律忽略这个插件**——只保证到 **0.2.0**，在更新的 DSH 上不保证可用也不再修；版本号停在 `0.1.1`（已作为最后一次发布发出）：不要再 bump、不要打 tag / 发布、不要加进任何 profile 的 `dsh.profile.bundles`；该插件已从插件市场（awesome-dsh-plugin）下架（2026-10）：不要再把它加回 `market/`，也不要向上游市场提条目。源码与 README 保留只作参考（DOM 增补写法仍有教学价值），但**不要「顺手修一下」**，也不要为它改仓库其他部分。唯一例外：它**阻塞**了其他插件或 DSH 本身（如依赖冲突）时才允许最小处置，并在提交信息里写明原因。
+
+**`model-capabilities` 的例外规则（强制）**：DSH 0.2.1 官方已原生提供模型行的输入类型控件与 hand-declared `llm-pi-ai` 路由的推理等级控件，本插件剩余增量不足，所以从 2026-10 起停止维护。之后的 DSH 升级、契约审计、兼容性核对、CI、发布**一律忽略这个插件**——只保证到 **0.2.1**，在更新的 DSH 上不保证可用也不再修；版本号停在 **0.1.2**（本地未发布；npm 最后发布 0.1.1）：不要再 bump、不要打 tag / 发布、不要加进任何 profile 的 `dsh.profile.bundles`；该插件已从插件市场（awesome-dsh-plugin）下架（2026-10）：不要再把它加回 `market/`，也不要向上游市场提条目。源码与 README 保留只作参考（模型行 DOM 增补 / 按行运行期探测的写法仍有教学价值），但**不要「顺手修一下」**，也不要为它改仓库其他部分。唯一例外：它**阻塞**了其他插件或 DSH 本身（如依赖冲突）时才允许最小处置，并在提交信息里写明原因。
 
 ## 3. DSH 契约与开发规范
 
@@ -231,7 +233,7 @@ node scripts/clientsmoke.mjs     # 浏览器半区冒烟（有则写）
 
 维护中的插件各自独立发版，版本号在 `plugins/<name>/package.json`。⚠️ `scripts.prepack` 是 **`npm run build`**（`scripts.build` = `node build.mjs`，另有 `watch` / `check`），**不是** `prepack: node build.mjs`——`prepack` 会自动重建 `lib/`，所以发布前不用手动构建。
 
-**规则（强制）**：新增插件或发布新版本时**不要**在本地 `npm publish`，改为打 tag 触发 `.github/workflows/publish.yml`（npm trusted publishing / GitHub OIDC，无需任何 token）。tag 形如 `<插件目录名>/v<版本>`，**版本必须与 `package.json` 逐字一致**；CI 跑 `tsc --noEmit` + `build.mjs` + selftest + clientsmoke（有哪个跑哪个；需要 DSH 部署的门控断言在 CI 上自行跳过）。首次发布某插件可先在 Actions 页 `publish` → Run workflow 选插件 + `dry_run` 验证。`turn-file-revert` 不在此列（见 §2）；本地 `npm publish` 只在 CI 故障时应急，且没有 provenance。
+**规则（强制）**：新增插件或发布新版本时**不要**在本地 `npm publish`，改为打 tag 触发 `.github/workflows/publish.yml`（npm trusted publishing / GitHub OIDC，无需任何 token）。tag 形如 `<插件目录名>/v<版本>`，**版本必须与 `package.json` 逐字一致**；CI 跑 `tsc --noEmit` + `build.mjs` + selftest + clientsmoke（有哪个跑哪个；需要 DSH 部署的门控断言在 CI 上自行跳过）。首次发布某插件可先在 Actions 页 `publish` → Run workflow 选插件 + `dry_run` 验证。`turn-file-revert` / `model-capabilities` 不在此列（见 §2）；本地 `npm publish` 只在 CI 故障时应急，且没有 provenance。
 
 **新增插件还要做**（漏第 2 项 CI 会直接报 `未知插件`）：
 
