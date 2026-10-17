@@ -11,7 +11,7 @@ turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-
 `git-bash-terminal-tool` 于 2026-09-18 经独立 PR
 [#5040](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/5040)（已 merge，见上游
 `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`）。
-**因此日常发版（改代码 + `npm publish`）不需要再提 PR**：条目里没有版本字段，市场按
+**因此日常发版（改代码 → 打 tag 走 CI，见 `AGENTS.md` §6）不需要再提 PR**：条目里没有版本字段，市场按
 `repository.url` + `repository.directory` 关联 npm，自动展示最新版本与下载量。
 只有**改条目元数据**（描述 / 分类）或**新增插件**才需要新开 PR。
 条目文件路径固定为 `data/plugins/<owner>__<repo>--<子路径把 / 换成 ->.yml`：
@@ -21,7 +21,7 @@ turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-
 | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-turn-file-revert.yml` | `data/plugins/converk__dsh-tweaks--plugins-turn-file-revert.yml` |
-| `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml` | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`（已合并；npm 现为 0.4.0，仓库 0.4.1 待发布） |
+| `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml` | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`（已合并；npm 现为 0.5.0） |
 
 一个 PR **最多 3 条**：前三个正好占满一个 PR，`git-bash-terminal-tool` 必须**另开一个独立 PR**（规范也建议"只提你愿意留下的那几个"）。
 
@@ -32,7 +32,7 @@ turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-
 | 每个 `package.json` 声明 `dsh.bundle` + 仓库根有 `cordis.patch.yml` | ✅ 三个都有 |
 | 仓库有真实可用代码 | ✅ |
 | 三个包声明 `files` / `repository` / `engines`，且不是 `private` | ✅ |
-| npm 包已发布 | ✅ 四个包均已上线（`dsh-tweaks-prompt-history` / `-model-capabilities` / `-turn-file-revert` 为 0.1.0；`-git-bash-terminal-tool` 为 0.4.0，仓库 0.4.1 待发布，需 DSH ≥ 0.2.0） |
+| npm 包已发布 | ✅ 四个包均已上线（`dsh-tweaks-prompt-history` 0.1.1 / `-model-capabilities` 0.1.1 / `-turn-file-revert` 0.1.1（已停止维护，最后版本）/ `-git-bash-terminal-tool` 0.5.0；均需 DSH ≥ 0.2.0） |
 | 仓库加 `dsh-plugin` topic | ⬜ **待做**（GitHub 仓库页 → About 齿轮 → Topics） |
 | 仓库创建满 1 天 | ⏳ 首个提交是 2026-09-10 18:34，**2026-09-11 18:34 之后**提 PR 才会过 CI |
 | 描述与代码相符、无营销词 | ✅ 已按代码核对（描述里的能力/适配器都对得上） |
@@ -57,20 +57,20 @@ git push -u origin add-converk-dsh-tweaks
 
 > 不要手工编辑仓库里的 README——那两个 README 由 `data/plugins/*.yml` 生成，改了会被 CI 打回。
 
-## 4. 发布 npm 包（预构建路线）
+## 4. 发布 npm 包（打 tag 走 CI，trusted publishing）
 
-**当前状态：四个包均已发布上线**（git-bash-terminal-tool 为 0.4.0、仓库 0.4.1 待发布，其余为 0.1.0），本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
+**当前状态：四个包均已发布上线**（`git-bash-terminal-tool` 0.5.0、`model-capabilities` 0.1.1、`prompt-history` 0.1.1、`turn-file-revert` 0.1.1 停维护最后版本），本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
 
-以后发新版时，四个包已经配置好 `prepack: npm run build`，**不用手动先构建**：
+发布**不要本地 `npm publish`**，一律走 `.github/workflows/publish.yml`（npm trusted publishing / GitHub OIDC，无需 token，带 provenance）。每个包需在 npmjs.com 各配一次 trusted publisher（Provider GitHub Actions / Repository `converk/dsh-tweaks` / Workflow name `publish.yml` / Environment 留空 / Allowed actions npm publish）。发版步骤：
 
 ```powershell
-npm login
-foreach ($n in @("prompt-history","model-capabilities","turn-file-revert","git-bash-terminal-tool")) {
-  Push-Location "<本仓库>\plugins\$n"
-  npm publish
-  Pop-Location
-}
+# tag 形如 <插件目录名>/v<版本>，版本必须与 package.json 逐字一致
+git tag -a <插件目录名>/v<版本> -m "dsh-tweaks-<name> <版本>"
+git push origin <插件目录名>/v<版本>
 ```
+
+- 推 tag 后 CI 会跑 `tsc --noEmit` + `build.mjs` + selftest/clientsmoke，再 `npm publish --provenance`；tag 与 package.json 版本不一致会直接失败。
+- 首次发布某插件可先在 Actions 页 `publish` → Run workflow 选插件 + `dry_run` 验证。
 
 - 发布后市场会**自动关联**：`repository.url` + `repository.directory` 会被拼成
   `converk/dsh-tweaks#path:/plugins/<name>`，正好对上条目的 `/tree/` 地址，于是详情页显示 npm 名与下载量。
@@ -88,4 +88,4 @@ foreach ($n in @("prompt-history","model-capabilities","turn-file-revert","git-b
 
 ## 6. 后续发版
 
-改完代码 → 提交推送 → 在对应插件目录 `npm publish`（`prepack` 会自动重建 `lib/`）→ 版本号记得先 `npm version patch|minor`。
+改完代码 → 提交推送 → 按 `AGENTS.md` §6 打 `<插件目录名>/v<版本>` tag 并推 origin（CI trusted publishing 自动发布，`prepack` 会重建 `lib/`）；版本号与 tag 必须逐字一致。

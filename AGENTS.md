@@ -59,7 +59,7 @@ plugins/<name>/
 
 **`market/`（投给插件市场）**：`market/data/plugins/<owner>__<repo>--<路径把 / 换成 ->.yml` 是**已合并进上游**的条目副本；条目里没有版本字段，市场按 `repository.url` + `repository.directory` 自动关联 npm，所以**日常发版不用再开 PR**，只有改条目元数据或新增插件才要。
 
-⚠️ `market/README.md` 的 §4/§6 仍写「本地 `npm login` + `npm publish`」循环（还停在 `git-bash-terminal-tool` 0.3.2），**已被 §6 的「打 tag 走 CI」取代**——读到那里以 §6 为准；那份文档只有「条目文件路径规则 / 改元数据要开 PR」部分仍然有效。
+✅ `market/README.md` 的发布流程已与 §6 同步（打 `<插件目录名>/v<版本>` tag 走 CI trusted publishing；2026-10 已按此发布 0.5.0 / 0.1.1）；条目文件路径规则 / 改元数据要开 PR 的部分仍有效。
 
 **包与依赖（强制）**：包名一律 `dsh-tweaks-<name>`，**禁止**用 `@deepseek-ai` 作为本仓库包 scope；引入第三方 npm 包必须先给出理由。
 
