@@ -68,43 +68,33 @@ composer 是 Lexical 的普通段落 + 软换行（没有列表节点，也不�
 
 ## 安装
 
-已发布到 npm（`dsh-tweaks-smart-list@0.1.0`），直接装：
+从 npm 安装：
 
 ```powershell
 npx @deepseek-ai/dsh plugin --profile web add dsh-tweaks-smart-list
 ```
 
-也可以从本仓库本地路径安装：
+也可以从本仓库源码安装（开发调试）：
 
 ```powershell
-npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\smart-list"
+npx @deepseek-ai/dsh plugin --profile web add "<仓库目录>/plugins/smart-list"
 ```
 
-安装后刷新浏览器（`Ctrl + Shift + R`）即可；这是纯浏览器半区插件，不需要重启 DSH 宿主。
+这是纯浏览器半区插件，安装后**刷新浏览器**（`Ctrl + Shift + R`）即可，不需要重启 DSH 宿主。
 
-> `web` 为 DSH 的 profile 名称，可在 `C:\Users\你的用户名\.dsh\profiles\` 下确认。
+> `web` 为 DSH 的 profile 名称；profile 配置在 DSH 主目录下的 `profiles/` 里：默认即用户目录下的
+> `~/.dsh`（Windows 为 `%USERPROFILE%\.dsh`），若设置了 `DSH_HOME` 则以其为准。
 
-## DSH 兼容性（0.2.1 审计 / 0.1.0）
+## DSH 兼容性
 
-- **最低支持 DSH 0.2.0**。
-- 本次逐条核对的版本：**0.2.1-rc.2**（本机 `DSH_STABLE_HOME` 完整安装）与 **0.2.0-rc.2**
-  （npm 包产物）；行文本提取 / 列表标记推导同时用纯逻辑自测（假 DOM）覆盖。
-- 核对方式：直接读官方产物（`lib/types/**/*.d.ts` 与已构建的 `lib/client.js`），
-  类型里看不出来的运行期语义再读构建产物里的真实字符串。
-- **结论：本插件依赖的契约在 0.2.0 – 0.2.1 成立。**
-
-| 本插件用到的契约 | 官方产物位置（相对 `<dsh>/node_modules/@deepseek-ai/`） | 0.2.0 → 0.2.1 核对结果 |
-|---|---|---|
-| overlay 席位键 `conversation.input.overlay`（`kind: 'list'` / `scope: 'session'` / `replaceRisk: 'none'`） | `dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts`；slot-catalog（`dsh-cordis-client-runner/lib/client.js`） | 未变 |
-| 会话标准 props `useInput` / `inputActions` | 同上 | 未变 |
-| `InputActions.captureInsertion(): TokenSpan` / `insertText(text, span): boolean`（插件唯一的文本插入入口） | `dsh-client-ui-conversation/lib/types/client/contract/input.d.ts` | 未变（0.2.0 起就有 `insertAsyncText` 实现） |
-| `TokenSpan { start, end, draftRev }` 形状 | `dsh-client-ui-conversation/lib/types/client/contract/draft-editor.d.ts` | 未变 |
-| `InputState.phase === 'plain'` 并集 | `dsh-client-ui-conversation/lib/types/client/contract/input.d.ts` | 未变 |
-| composer 可编辑根把字面 `\n` 当换行渲染（`white-space: pre-wrap`） | 运行时产物 `dsh-client-ui-conversation/lib/client.js` | 未变（两版 composer CSS 均含 `white-space:pre-wrap`） |
-| `insertText` / 粘贴路径允许纯文本带 `\n`（`insertAsyncText(span, text)`、`paste(text)` → `selection.insertText(clean)`） | 同上 | 未变（这正是本插件「插入换行」的依据） |
-| `[data-composer-card]`（键盘作用域限定）与 overlay 的渲染邻接 | 同上 | 未变：两版里 `data-composer-card` 属性之后紧跟 `renderSlot("conversation.input.overlay")` |
-| client bundle 加载协议 `window.__ModuleLoader__.load({ id, factory })` | `dsh-client-modules/lib/types/client/manifest.d.ts` | 未变 |
-| `slots.inject(key, cb)` / `slots.register({ name, id, order }, el)` | `dsh-client-ui-renderer/lib/types/client/registry.d.ts` | 未变（SlotCore 运行时语义不变） |
+- **支持范围**：最低 DSH **0.2.0**，按 **0.2.1 契约基线**核对；更高版本不做保证。
+- 用到的关键契约：`conversation.input.overlay` 席位（`kind: 'list'` / `scope: 'session'` /
+  `replaceRisk: 'none'`）、session 标准 props `useInput` / `inputActions`；
+  `InputActions.captureInsertion(): TokenSpan` 与 `insertText(text, span)`（插件唯一的文本插入入口）、
+  `TokenSpan { start, end, draftRev }`、`InputState.phase === 'plain'`；composer 可编辑根把字面
+  `\n` 当换行渲染（`white-space: pre-wrap`），官方粘贴路径同样用 `selection.insertText` 接收多行文本；
+  `[data-composer-card]` 与 overlay 的渲染邻接；client bundle 的 `window.__ModuleLoader__` 加载协议。
+- 权威契约位置（官方 d.ts 与客户端产物）见 [AGENTS.md](../../AGENTS.md) §3.9。
 
 ### 未受类型保护的脆弱点（已知限制）
 
@@ -119,10 +109,10 @@ npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugin
   Shift+Enter 是否只换一行。
 - **字面 `\n` 依赖 composer 的 `white-space: pre-wrap`，也依赖 DSH 自己的粘贴路径继续用
   `selection.insertText` 接收多行文本**；若官方改成强制拆段，插入行为需重新评估。
-  `scripts/selftest.mjs` 已把这两条运行期语义钉成断言（有 DSH 部署时生效）。
+  `scripts/selftest.mjs` 已把这两条运行期语义钉成断言（提供 DSH 部署路径时生效）。
 - `scripts/selftest.mjs` 不需要 DSH 部署即可跑大部分断言：bundle 协议、源码契约面、
   列表标记推导、假 DOM 行提取、vm 里驱动 overlay 组件的按键行为（含不接管场景）；
-  设 `DSH_CONTRACT_HOMES=<部署根>` 时追加官方产物原文/结构断言。
+  提供 DSH 部署路径时（`DSH_CONTRACT_HOMES`）追加官方产物原文/结构断言。
 
 ## 开发者
 

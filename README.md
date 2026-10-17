@@ -1,8 +1,8 @@
 # dsh-tweaks
 
-给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
+给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。各插件互相独立，按需安装。
 
-> 适配 DSH **0.2.1**（最低 0.2.0）；本仓库当前版本：`git-bash-terminal-tool` **0.5.0**、`prompt-history` **0.1.1**、`smart-list` **0.1.0**。
+> 适配 DSH **0.2.1**；最低支持 **0.2.0**。
 
 ---
 
@@ -10,13 +10,8 @@
 
 - [prompt-history —— 输入框里的历史提示词](#prompt-history--输入框里的历史提示词)
 - [smart-list —— 输入框里的列表自动续号](#smart-list--输入框里的列表自动续号)
-- ~~[model-capabilities —— 给模型行补上「思考强度 / 容量」](#model-capabilities--给模型行补上思考强度--容量)~~
-  —— **已弃用并停止维护**：DSH 0.2.1 官方已原生提供模型行的输入类型控件与 hand-declared
-  路由的推理等级控件，插件剩余增量不足；已从插件市场下架，本机安装也已卸载
-- ~~[turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)~~
-  —— **已弃用并停止维护**：功能已由官方提供（DSH 0.2.x 自带的回合改动卡片 + 逐文件 diff 复核），
-  最后一个支持版本 **0.2.0**
 - [git-bash-terminal-tool —— 可将 Windows 环境下的终端工具替换为 Git Bash](#git-bash-terminal-tool--可将-windows-环境下的终端工具替换为-git-bash)
+- [已停止维护的插件](#已停止维护的插件)
 - [安装](#安装)
 
 ---
@@ -39,8 +34,8 @@
 ![输入框里按 ↑/↓ 召回本会话的历史提示词](docs/images/prompt-history.png)
 
 > 只有输入框为空时才会接管 ↑，不会跟 `/` 命令菜单、`@` 引用菜单打架；历史只属于当前会话，刷新页面也还在。
->
-> **0.1.1**：多段文本块的历史提取改用换行连接（不再粘成一串）；`Shift+↑` / `Shift+↓` 不再被历史召回拦截，留给编辑器自己做选择；`scripts/selftest.mjs` 补了纯逻辑断言（提取、去重、上限、多段文本）。
+
+详细说明见 [`plugins/prompt-history/README.md`](./plugins/prompt-history/README.md)。
 
 ---
 
@@ -69,89 +64,14 @@
 >
 > 和 Codex / ChatGPT 的「列表块」不同：那边是富文本列表 marker，DSH 的 composer 是
 > 普通段落 + 软换行，本插件用纯文本插入 `换行 + 下一个标记` 达到同样的输入体验，
-> 不改文档结构、不碰 `@` 引用 chip。详细原理与兼容性见
+> 不改文档结构、不碰 `@` 引用 chip。详细原理与边界见
 > [`plugins/smart-list/README.md`](./plugins/smart-list/README.md)。
->
-> **发布状态**：npm [`dsh-tweaks-smart-list@0.1.0`](https://www.npmjs.com/package/dsh-tweaks-smart-list)（CI trusted publishing + provenance）；
-> 插件市场条目已提交 [awesome-dsh-plugin PR #7740](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7740)，等维护者合并后自动出现在市场。
-
----
-
-## model-capabilities —— 给模型行补上「思考强度 / 容量」
-
-> **⚠️ 已弃用：DSH 0.2.1 官方已原生提供模型行的输入类型控件与 hand-declared 路由的推理等级控件，本插件停止维护。**
-> 已从插件市场下架，本机安装也已卸载。最后版本 **0.1.2**（本地未发布，npm 最后发布为 **0.1.1**），不再发版；源码保留只作参考。
-
-**它能做什么**
-
-在「设置 → 模型」的模型行「容量」展开区注入：
-
-- **思考强度**（只有第三方网关 `llm-pi-ai`、且**官方没有渲染推理控件**的模型行有）—— 协议预置 `OpenAI` = off / minimal / low / medium / high / xhigh / max，`Anthropic` = off / low / medium / high / xhigh / max；默认勾 off / low / high / max；一个都不勾 = 不支持思考。原则是**官方有的我们就不提供**：DSH 0.2.1 官方已给 hand-declared 路由渲染推理控件（`ModelReasoningEfforts`），这些行插件按行探测到官方控件后不再提供自己的编辑器，只留摘要 / 容量 / 一句提示；官方没有控件的行（如 0.2.0 的 declared 路由）才由插件补预置 UI。
-- **容量快捷填入** —— 官方「上下文窗口 / 最大输出」输入框旁的 `1M` / `128K` 按钮；新建模型行展开容量时自动填好 1000000 / 131072。
-- 官方 DeepSeek（`llm-deepseek`）没有每模型思考强度（档位是提供方级 `thinking` / `reasoningEffort`），插件只补容量 + 摘要，不提供提供方级面板。
-- 插件**只写 `reasoningEfforts`**，不写 `input` / `inputModalities`，也不重复注入官方已有的多模态控件（官方模型行自 0.2.0 起自带 `ModelInputTypes`）。
-
-**怎么用**
-
-1. 打开 **设置 → 模型**，选一个提供方（比如 `llm-pi-ai`）→ **编辑**。
-2. 找到要改的模型那一行，点 **「容量」** 展开：顶部是当前配置摘要；插件管理的 `llm-pi-ai` 行会显示思考强度编辑器（官方已渲染推理控件的行不显示，只提示由官方控件管理）；底部是 `1M` / `128K` 按钮。
-3. 改完点官方 **「保存」** 才真正写入；点官方「取消」丢弃这次改动。
-
-> 截图是 0.1.0 旧版，仍能看到 0.1.1 已删除的重复「多模态」单选框；实际界面多模态只保留官方原生控件。
-
-**第三方网关（`llm-pi-ai`）** —— 官方没有渲染推理控件的行：思考强度 + 容量快捷：
-
-![llm-pi-ai 模型行展开：思考强度选 OpenAI 预置（默认勾 off/low/high/max）+ 1M / 128K](docs/images/model-capabilities-third-party.png)
-
-**官方 DeepSeek（`llm-deepseek`）** —— 容量快捷 + 摘要（截图是 0.1.0 旧版，图里的「多模态」单选框现在由官方控件提供）：
-
-![llm-deepseek 模型行展开：提供方级思考档位提示 + 1M / 128K](docs/images/model-capabilities-official.png)
-
----
-
-## turn-file-revert —— 本轮改动统计 + 一键撤回
-
-> **⚠️ 已弃用：功能已由官方提供，本插件停止维护。**
-
-**它能做什么**
-
-每轮对话结束，这个插件在回合末尾补一行：
-
-- 这一轮总共 **加了多少行、删了多少行**，改了 **几个文件**；
-- 一个 **「撤回全部修改」** 按钮：一次把这一轮改过的文件全部还原到改动前；
-- 撤回之后按钮会变成 **「重新应用修改」**，再点一下就原样写回去。
-
-补出来的一行长这样：
-
-    本轮改动情况：+52 行 −7 行    3 个文件    [撤回全部修改]
-
-**怎么用**
-
-1. 等一轮"改过文件"的对话结束。
-2. 在回合末尾找到插件补的那一行。
-3. 点 **「撤回全部修改」** → 文件回到这一轮开始前的内容，按钮变成「重新应用修改」。
-4. 想反悔，就再点 **「重新应用修改」**。
-
-> 这一行**不依赖官方的「本轮文件改动」行**：模型在 `run_code` 里改文件时官方不会列，插件照样统计。
-> **只有本会话最后一次对话能撤回 / 重新应用**：更早回合的按钮是灰的，鼠标移上去提示「该轮对话改动现在不支持撤回/恢复」。
-
-**① 本轮有改动 —— 统计 + 可点的「撤回全部修改」**
-
-![本轮有改动：本轮改动情况 +52 行 −7 行、3 个文件，「撤回全部修改」按钮可点](docs/images/turn-file-revert-modified.png)
-
-**② 点了「撤回全部修改」—— 按钮变成「重新应用修改」**
-
-![撤回后：按钮变为「重新应用修改」并提示「已撤回本回合修改」](docs/images/turn-file-revert-reverted.png)
-
-**③ 更早的回合 —— 按钮置灰，鼠标移上去给提示**
-
-![非最后一次对话：按钮置灰不可点，hover 提示「该轮对话改动现在不支持撤回/恢复」](docs/images/turn-file-revert-latest-only.png)
 
 ---
 
 ## git-bash-terminal-tool —— 可将 Windows 环境下的终端工具替换为 Git Bash
 
-> ⚠️ **请用 0.5.0 或更高**（最低支持 DSH **0.2.0**）。**0.4.1** 已修掉 DSH 0.2.1 上的设置行只读；**0.5.0** 对齐会话当前目录（`working_directory`）/ 结果 `cwd` + `presentationMeta` / `jobs.toolCall`，并修掉审计发现的四个缺陷（安装根探测、文件名校验、半注册回滚、`/state` 降级）。
+> Windows 专用（非 Windows 平台不会挂载）；最低支持 DSH **0.2.0**。
 
 **它能做什么**
 
@@ -181,17 +101,49 @@ Windows 上 DSH 默认让模型用 PowerShell（工具名 `pwsh`）执行命令�
 
 ---
 
+## 已停止维护的插件
+
+下面两个插件已**停止维护**：代码与各自的 README 已从本仓库移除（历史可在 `git log` 中查看），
+npm 上已发布的旧版本不再更新，也不在插件市场收录。此处保留说明，让后来者了解它们曾经提供什么、
+为什么停维护。
+
+### model-capabilities —— 已停止维护（最后支持 DSH 0.2.1）
+
+原功能：在 **设置 → 模型** 的模型行「容量」展开区补上官方没有的控件 ——
+第三方网关 `llm-pi-ai` 且官方未渲染推理控件的模型行上的**思考强度**编辑器（OpenAI / Anthropic 协议预置档位），
+以及「上下文窗口 / 最大输出」的 **1M / 128K 容量快捷填入**。
+
+停维护原因：DSH 0.2.1 官方已原生提供模型行的输入类型控件与 hand-declared 路由的推理等级控件，
+插件剩余增量不足。
+
+### turn-file-revert —— 已停止维护（最后支持 DSH 0.2.0）
+
+原功能：每轮对话结束在回合末尾补一行「本轮改动统计 + 撤回全部修改 / 重新应用修改」——
+统计这一轮加了多少行、删了多少行、改了几个文件，并能把这一轮改过的文件一键还原/重新应用。
+
+停维护原因：官方 DSH 0.2.x 已内置回合改动卡片与逐文件 diff 复核能力。
+
+---
+
 ## 安装
 
-下载本仓库，然后安装需要的插件。各插件互相独立，下方以 **prompt-history** 为例，把名称换成
-对应插件所在目录名（如 `smart-list`、`prompt-history`、`git-bash-terminal-tool`）即可：
+各插件互相独立，装需要的那个即可。目录名即上文的 `<name>`（如 `prompt-history`），npm 包名为 `dsh-tweaks-<name>`。
 
 ```
-npx @deepseek-ai/dsh plugin --profile web add "<仓库目录>/plugins/prompt-history"
+# 从 npm 安装（推荐）
+npx @deepseek-ai/dsh plugin --profile web add dsh-tweaks-<name>
+
+# 或从本仓库源码安装
+npx @deepseek-ai/dsh plugin --profile web add "<仓库目录>/plugins/<name>"
 ```
 
 安装完成后重启 DSH，并在浏览器中强制刷新（`Ctrl + Shift + R`）。
 
 > 纯浏览器半区的插件（如 `smart-list`）安装后刷新浏览器即可，不需要重启 DSH 宿主。
+>
+> `web` 为 DSH 的 profile 名称；profile 配置在 DSH 主目录下的 `profiles/` 里：默认即用户目录下的
+> `~/.dsh`（Windows 为 `%USERPROFILE%\.dsh`），若设置了 `DSH_HOME` 则以其为准。
 
-> `<仓库目录>` 指你把本仓库下载（克隆）到的目录；`web` 为 DSH 的 profile 名称，其配置在 DSH 主目录下的 `profiles/` 里：默认即用户目录下的 `~/.dsh`（Windows 为 `%USERPROFILE%\.dsh`），若设置了 `DSH_HOME` 则以其为准。
+---
+
+开发约定、DSH 契约与常见坑见 [AGENTS.md](./AGENTS.md)。

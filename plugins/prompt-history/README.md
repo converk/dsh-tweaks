@@ -20,46 +20,37 @@
 ## 说明
 
 - **只在输入框为空时才接管 ↑**：不会跟 `/` 命令菜单、`@` 引用菜单抢方向键，也不会打断正常编辑（输入法打字中、按着 Ctrl/Alt/Shift 时都不管）。
+- **Shift+↑/↓ 放行**：保留编辑器自己的选择行为，不被历史召回拦截。
 - **历史只属于当前会话**：包含你在运行中插话发过的内容；刷新页面后依然在。
-- 直接开始打字就会退出历史浏览，已经填进输入框的内容会保留（"回忆出来直接改"）。
+- 一条消息里有多个 text 块时按换行连接，不会首尾相接地粘成一串。
+- 直接开始打字就会退出历史浏览，已经填进输入框的内容会保留（「回忆出来直接改」）。
 - 最多记 200 条。
 - 角标文案跟随界面语言：中文「历史 n/N」，英文「History n/N」。
 
 ## 安装
 
 ```powershell
-npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugins\prompt-history"
+# 从 npm（推荐；需要 DSH >= 0.2.0）
+npx @deepseek-ai/dsh plugin --profile web add dsh-tweaks-prompt-history
+
+# 或从本仓库源码（开发调试）
+npx @deepseek-ai/dsh plugin --profile web add "<仓库目录>/plugins/prompt-history"
 ```
 
 重启 DSH，并在浏览器中强制刷新（`Ctrl + Shift + R`）。
 
-> `web` 为 DSH 的 profile 名称，可在 `C:\Users\你的用户名\.dsh\profiles\` 下确认。
+> `web` 为 DSH 的 profile 名称；profile 配置在 DSH 主目录下的 `profiles/` 里：默认即用户目录下的
+> `~/.dsh`（Windows 为 `%USERPROFILE%\.dsh`），若设置了 `DSH_HOME` 则以其为准。
 
-## DSH 兼容性（0.2.1 审计 / 0.1.1）
+## DSH 兼容性
 
-- **最低支持 DSH 0.2.0**（2026-10 起不再考虑 0.1.7）。
-- 本次逐条核对的版本：**0.2.0-rc.2** 与 **0.2.1-rc.1**；另对 npm `next` 的 **0.2.1-rc.2** 做了关键产物抽检（关键 client 产物与 rc.1 逐字节相同）。
-- 核对方式：直接读官方产物（`lib/types/**/*.d.ts` 与已构建的 `lib/client.js`），对同名文件做 sha256 逐字比对；类型看不出的地方再读运行时产物里的真实结构。
-- **结论：本插件依赖的契约在 0.2.1 全部仍然成立，没有需要修的真失效。**
-- 0.1.1 的改动只涉及行为，不涉及契约：
-  - 多段 text 块之间改用换行连接，不再首尾相接地粘成一串——这是对「一条消息多个 text 块」的防御性兼容；官方 composer 目前每条用户消息只有一个 text 块；
-  - **Shift+↑/↓ 放行**：不再被历史召回拦截，保留编辑器自己的选择行为。
-- `scripts/selftest.mjs` 契约闸门：无 DSH 部署时跑 bundle 协议 + 源码契约面 + 纯逻辑历史提取（esbuild 现场构建 `src/shared/history.ts`）+ vm 驱动 `apply` 的行为断言（CI 可跑）；设 `DSH_CONTRACT_HOMES` 时追加官方产物原文/结构断言（overlay 席位、标准 props、快照类型、`inputActions.setDraft`、locale 签名、`data-composer-card` 与 overlay 的运行时邻接）。
-
-| 本插件用到的契约 | 官方产物位置（相对 `<dsh>/node_modules/@deepseek-ai/`） | 0.2.0 → 0.2.1 核对结果 |
-|---|---|---|
-| overlay 席位键 `conversation.input.overlay`（`kind: 'list'` / `scope: 'session'` / `replaceRisk: 'none'`） | `dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts`；slot-catalog（`dsh-cordis-client-runner/lib/client.js`） | 未变（occupants 仍是 commands / input-trigger / message-feedback 三席） |
-| 会话标准 props `useInput` / `inputActions` | 同上 | 未变 |
-| `useChat` 标准 prop | `dsh-client-ui-chat/lib/types/client/contract/slots.d.ts` | 未变（session 标准 props 仅增补 remote-access 系列，本插件不用） |
-| `useChat(s => s.legacy.nodes)`：`LegacyConversationSlice` / `ChatSnapshot.legacy` | `dsh-client-ui-chat/lib/types/client/contract/snapshot.d.ts` | 未变 |
-| 节点 `kind: 'user' \| 'steering'` + `content: readonly ContentBlock[]` | `dsh-client-ui-conversation/lib/types/client/contract/records.d.ts` | 未变 |
-| 文本块 `{ type: 'text'; text: string }` | `dsh-llm/lib/types/types.d.ts` | 未变 |
-| `inputActions.setDraft(text)` | `dsh-client-ui-conversation/lib/types/client/contract/input.d.ts` | 未变 |
-| `snapshot.draft` / `snapshot.phase === 'plain'` | 同上 | 未变 |
-| `slots.inject(key, cb)` / `slots.register({ name, id, order }, el)` | `dsh-client-ui-renderer/lib/types/client/registry.d.ts`；服务 `ctx.slots` 见同包 `client/index.d.ts` | 未变（SlotCore 运行时语义不变；0.2.1 起它不再作为独立包随完整安装发布，见 AGENTS.md §3.9） |
-| `locale.register(ns, lang, dict)` / `locale.bind(ns)` | `dsh-client-locale/lib/types/client/index.d.ts`；运行时 `lib/client.js` | 未变（两版 `lib/client.js` sha256 相同） |
-| DOM 判据 `[data-composer-card]`（键盘作用域限定） | 运行时产物 `dsh-client-ui-conversation/lib/client.js` | 未变：0.2.1 里 `"data-composer-card": true` 之后约 426 字符就是 `renderSlot("conversation.input.overlay")`（0.2.0 为 351，同一卡片子树；0.2.1 新增 `data-composer-overlay` 属纯增补） |
-| client bundle 加载协议 `window.__ModuleLoader__.load({ id, factory })` | `dsh-client-modules`（manifest） | 未变 |
+- **支持范围**：最低 DSH **0.2.0**，按 **0.2.1 契约基线**核对；更高版本不做保证。
+- 用到的关键契约：`conversation.input.overlay` 席位（`kind: 'list'` / `scope: 'session'` /
+  `replaceRisk: 'none'`）、session 标准 props `useInput` / `inputActions` / `useChat`、
+  `useChat(s => s.legacy.nodes)` 里 `kind: 'user' | 'steering'` 节点的文本块、
+  `inputActions.setDraft(text)`、`locale.register` / `locale.bind`、client bundle 的
+  `window.__ModuleLoader__` 加载协议。
+- 权威契约位置（官方 d.ts 与客户端产物）见 [AGENTS.md](../../AGENTS.md) §3.9。
 
 ### 未受类型保护的脆弱点（已知限制）
 
@@ -67,10 +58,12 @@ npx @deepseek-ai/dsh plugin --profile web add "D:\你的目录\dsh-tweaks\plugin
   composer 卡片时，类型检查不会报警，`anchor.closest('[data-composer-card]')` 会返回 `null`，
   表现为 **↑/↓ 静默失效**（界面无反应、无报错）。升级 DSH 后复核这一条，要直接读运行时产物：
   确认 `"data-composer-card"` 与 `renderSlot("conversation.input.overlay")` 仍在同一个卡片节点内
-  （`scripts/selftest.mjs` 已有这条官方产物断言，本机设了 `DSH_CONTRACT_HOMES` 时生效）。
+  （`scripts/selftest.mjs` 已有这条官方产物断言，提供 DSH 部署路径时生效）。
 - `useChat` / `useInput` / `inputActions` 是 Slot 运行时注入的 props，本插件用**结构投影**
   （`src/client/types.ts`）读取，**没有编译期保证**；升级 DSH 后同样要跑一遍真机冒烟（输入框为空时按 ↑）。
-- 本插件现在有 `scripts/selftest.mjs`（CI 自动跑：bundle 协议 + 源码契约面 + 纯逻辑历史提取 + vm 驱动 apply；官方产物段需要本机有 DSH 部署，CI 上自动跳过）；**仍没有 clientsmoke**——键盘交互（Shift 放行、IME 组合期、相位判断）最终仍需真机冒烟。
+- 本插件有 `scripts/selftest.mjs`（CI 自动跑：bundle 协议 + 源码契约面 + 纯逻辑历史提取 + vm 驱动
+  `apply` 的行为断言；官方产物段需要提供 DSH 部署路径，CI 上自动跳过）；**仍没有 clientsmoke**——
+  键盘交互（Shift 放行、IME 组合期、相位判断）最终仍需真机冒烟。
 
 ## 开发者
 
