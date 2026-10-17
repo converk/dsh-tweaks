@@ -1,7 +1,7 @@
 {
   "name": "dsh-tweaks-smart-list",
   "description": "在 DSH 输入框中自动续写列表：Shift+Enter 换行后自动补上下一个编号（1. → 2.）或项目符号",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "repository": {
