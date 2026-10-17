@@ -35,9 +35,6 @@ const CSS = `
 .dshMc_status{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .dshMc_statusError{color:var(--dsw-alias-state-error-primary)}
 .dshMc_statusSuccess{color:var(--dsw-alias-state-success-primary)}
-/* DSH 0.2.1 起官方给 hand-declared pi-ai 路由渲染原生推理控件（\`_modelReasoning*\`）；
-   插件注入自己的「协议预置」UI 后会在这个行元素上打标记，把官方那套隐藏，保证一行只有一套思考强度编辑。 */
-[data-dsh-mc-hide-native-reasoning] [class*="_modelReasoning"]{display:none!important}
 `
 
 /** 幂等注入行内控件样式（多次调用只插一次）。 */

@@ -13,6 +13,9 @@
  *   `anthropic` = off/low/medium/high/xhigh/max；套用预置时默认勾选
  *   off/low/high/max。一个档都不勾 = 该模型不支持思考，写 `reasoningEfforts: false`；
  *   勾了档位就写 dict，未勾选的档位不写键，本体把它们钉成「不支持」；
+ * - 归属按行**运行期探测**（{@link officialManagesRowReasoning}）：官方已渲染推理
+ *   控件的行交给官方、不产生草稿；官方没渲染（含 0.2.0 的 declared 路由）才由插件
+ *   管理并允许写回 `reasoningEfforts`；
  * - 多模态由官方 `ModelInputTypes` 管理，插件**不读也不写** `input` / `inputModalities`
  *   （0.1.2 保留该修复：早期版本写死 `input: ['text']` 会覆盖目录继承的图片能力）；
  * - 上下文窗口 / 最大输出由官方输入框负责，插件只提供 1M / 128K 快捷填入。
@@ -55,7 +58,8 @@ export type SettingsPathOp =
  * 一个模型的思考强度草稿。
  *
  * 多模态不在这里：官方模型行自 0.2.0 基线起就原生提供输入类型控件
- * （`ModelInputTypes`），插件重复注入会和官方草稿打架；本插件只管思考强度。
+ * （`ModelInputTypes`），插件重复注入会和官方草稿打架；思考强度则只补
+ * 官方**没有**渲染推理控件的 pi-ai 行（见 {@link officialManagesRowReasoning}）。
  */
 export interface ModelCapabilityDraft {
   /** 勾选的档位 → 过线拼写；键不存在 = 该档不支持。空对象 = 不支持思考。 */
@@ -102,7 +106,8 @@ export interface SaveInput {
    */
   visibleModelIds?: readonly string[] | undefined
   /**
-   * 该命名空间是否有插件可写的每模型思考强度：DeepSeek 传 false，pi-ai 传 true。
+   * 该命名空间是否有插件可写的每模型思考强度：DeepSeek 传 false，pi-ai 传 true
+   * （官方已渲染推理控件的行由 `augment.ts` 在提交前按行过滤，不会写回）。
    */
   manageReasoning?: boolean | undefined
 }
@@ -113,6 +118,32 @@ export interface SavePlan {
   ops: SettingsPathOp[]
   issues: SaveIssue[]
   mode: 'models' | 'none'
+}
+
+/**
+ * 本行的每模型思考强度是否由**官方控件**管理。
+ *
+ * 0.2.1 起官方只给 hand-declared pi-ai 路由渲染原生推理控件，但判定必须按行
+ * **运行期探测**（`augment.ts` 的 `_modelReasoning` DOM 判据）而不是版本号或
+ * `provider.declared`：0.2.0 没有该组件（declared 路由也得插件补），0.2.1 的
+ * 非 declared 路由同样没有。
+ * @param isDeepSeek - 是否 DeepSeek 命名空间（只有提供方级字段，没有每模型控件）。
+ * @param officialControl - 该行展开区里是否真的渲染了官方推理控件。
+ * @returns 官方是否管理这一行。
+ */
+export function officialManagesRowReasoning(isDeepSeek: boolean, officialControl: boolean): boolean {
+  return !isDeepSeek && officialControl
+}
+
+/**
+ * 本行的每模型思考强度是否由**插件控件**管理（= 官方没有渲染推理控件的 pi-ai 行）。
+ * 只有返回 true 的行才允许进入写入计划。
+ * @param isDeepSeek - 是否 DeepSeek 命名空间。
+ * @param officialControl - 该行展开区里是否真的渲染了官方推理控件。
+ * @returns 插件是否管理这一行。
+ */
+export function pluginManagesRowReasoning(isDeepSeek: boolean, officialControl: boolean): boolean {
+  return !isDeepSeek && !officialControl
 }
 
 /** 用户层已存的模型（`models[]` 条目优先，其次 `modelOverrides` 的值）。 */
@@ -382,8 +413,8 @@ export function buildModelOps(input: SaveInput): SavePlan {
   const overrides = isJsonObject(overridesRaw) ? overridesRaw : undefined
   const issues: SaveIssue[] = []
 
-  // DeepSeek 没有插件可写的每模型字段，所以这里直接返回空计划，
-  // 绝不为「空改动」物化 models（那会丢目录字段）。
+  // DeepSeek 没有插件可写的每模型字段（官方管理的 pi-ai 行由调用方提交前按行
+  // 过滤），所以这里直接返回空计划，绝不为「空改动」物化 models（那会丢目录字段）。
   if (input.manageReasoning === false) return { ops: [], issues, mode: 'none' }
 
   if (isJsonArray(userModels) && overrides !== undefined) {

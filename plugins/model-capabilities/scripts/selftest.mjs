@@ -124,6 +124,28 @@ test('draftsEqual / copyDraft', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 思考强度的归属判定（运行期探测的纯逻辑部分）
+//
+// 官方有的我们就不提供：插件不按版本号、也不按 provider.declared 静态判断，
+// 而是逐行探测官方推理控件是否真的渲染（augment.ts 的 _modelReasoning DOM 判据），
+// 再把探测结果交给这里判定归属。0.2.0 没有官方组件 -> declared 路由也必须由插件补。
+// ---------------------------------------------------------------------------
+
+test('归属判定：0.2.1 的 declared 行交官方，0.2.0 / 非 declared 行由插件补', () => {
+  // 0.2.0：官方产物里没有 ModelReasoningEfforts -> 所有 pi-ai 行（含 declared）插件补。
+  assert.equal(cap.officialManagesRowReasoning(false, false), false)
+  assert.equal(cap.pluginManagesRowReasoning(false, false), true)
+  // 0.2.1：hand-declared pi-ai 行探测到官方控件 -> 交给官方，插件不提供、不写回。
+  assert.equal(cap.officialManagesRowReasoning(false, true), true)
+  assert.equal(cap.pluginManagesRowReasoning(false, true), false)
+  // DeepSeek 命名空间始终没有每模型控件（提供方级字段另由官方 Config 管）。
+  assert.equal(cap.officialManagesRowReasoning(true, false), false)
+  assert.equal(cap.pluginManagesRowReasoning(true, false), false)
+  assert.equal(cap.officialManagesRowReasoning(true, true), false)
+  assert.equal(cap.pluginManagesRowReasoning(true, true), false)
+})
+
+// ---------------------------------------------------------------------------
 // buildModelOps：只写 reasoningEfforts，绝不碰官方多模态字段
 // ---------------------------------------------------------------------------
 
@@ -465,21 +487,24 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
   }
   assert.ok(augment.includes('input[type="text"], input:not([type])'), '模型 ID 输入框判据')
 
-  // 思考强度由插件自己的预置 UI 管理：pi-ai 恒定由插件维护，不跟随官方原生控件。
-  assert.ok(augment.includes('const manageReasoning = !isDeepSeek'), 'pi-ai 的每模型 reasoningEfforts 归插件管')
-  assert.ok(augment.includes('if (manageReasoning) {'), '放置点按 manageReasoning 建思考控件')
-  assert.ok(augment.includes('dataset.dshMcHideNativeReasoning'), '注入后给行打标隐藏官方原生推理控件')
-  assert.ok(augment.includes('delete state.row.dataset.dshMcHideNativeReasoning'), '卸载时清理隐藏标记')
-  assert.equal(augment.includes('officialManaged'), false, '不得再按官方归属过滤写入')
-  assert.equal(clientIndex.includes('llm-deepseek-account'), false, '不得再为 account 路由挂提供方面板')
-
-  // 官方原生推理控件（0.2.1 给 hand-declared 路由渲染）由样式表按行标记隐藏。
-  const styles = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
+  // 思考强度归属：官方有的我们就不提供，按行运行期探测官方原生推理控件。
   assert.ok(
-    styles.includes('[data-dsh-mc-hide-native-reasoning] [class*="_modelReasoning"]'),
-    '样式表按行标记隐藏官方原生推理控件',
+    augment.includes("const OFFICIAL_REASONING_FRAGMENT = '_modelReasoning'"),
+    '探测判据丢了官方推理控件的 CSS 局部名',
   )
-  assert.ok(styles.includes('display:none!important'), '隐藏规则必须压过官方 display')
+  const probeSelector = '[class*="' + DOLLAR + '{OFFICIAL_REASONING_FRAGMENT}"]'
+  assert.ok(augment.includes(probeSelector), '探测必须按 class* 子串匹配官方推理控件')
+  assert.ok(augment.includes('officialManagesRowReasoning'), '归属判定必须走纯逻辑层')
+  assert.ok(augment.includes('pluginManagesRowReasoning'), '归属判定必须走纯逻辑层')
+  assert.ok(augment.includes('if (pluginManaged(state))'), '只有插件管理的行才建思考控件')
+  assert.ok(augment.includes('if (officialManaged(state))'), '官方管理的行必须在写入前被过滤')
+  assert.equal(augment.includes('options.declared === true'), false, '不得按 declared 静态一刀切')
+  assert.ok(
+    augment.includes("t(officialManaged(state) ? 'reasoningOfficialHint' : 'reasoningProviderHint')"),
+    '官方管理的行只显示提示，不提供编辑器',
+  )
+  assert.equal(augment.includes('dshMcHideNativeReasoning'), false, '不再用标记隐藏官方控件')
+  assert.equal(clientIndex.includes('llm-deepseek-account'), false, '不得再为 account 路由挂提供方面板')
 
   // 0.1.1 起不再注入 / 维护官方已有的多模态控件（官方 ModelInputTypes 负责）。
   assert.equal(augment.includes('dshMc_radios'), false, '不得再注入多模态 radio')

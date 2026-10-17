@@ -20,6 +20,8 @@ export const zh = {
   levelsHint: '都不勾选 = 该模型不支持思考（写 false）；未勾选的档位会被钉成不支持。',
   reasoningProviderHint:
     'DeepSeek 适配器没有每模型思考强度；档位由提供方级 reasoningEffort / thinking 控制（settings.yaml）。',
+  reasoningOfficial: '由官方模型行控件管理',
+  reasoningOfficialHint: '思考强度由官方模型行原生的推理控件管理；本插件只补充容量快捷填入。',
   reasoningProviderDefault: '提供方默认',
   wireOffHint: '留空 = 不发参数',
   capacityLabel: '上下文长度与最大输出长度：',
@@ -49,6 +51,8 @@ export const en: Record<keyof typeof zh, string> = {
   levelsHint: 'No level ticked means the model does not reason (writes false); unticked levels are pinned unsupported.',
   reasoningProviderHint:
     'The DeepSeek adapter has no per-model reasoning effort; levels come from the provider-level reasoningEffort / thinking fields (settings.yaml).',
+  reasoningOfficial: 'Managed by the official model-row controls',
+  reasoningOfficialHint: 'Reasoning effort is managed by the official model-row reasoning controls; this plugin only adds the capacity shortcut.',
   reasoningProviderDefault: 'provider default',
   wireOffHint: 'Blank = send no parameter',
   capacityLabel: 'Context window & max output:',

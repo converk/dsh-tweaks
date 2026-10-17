@@ -81,7 +81,7 @@
 
 在「设置 → 模型」的模型行「容量」展开区注入：
 
-- **思考强度**（只有第三方网关 `llm-pi-ai` 有）—— 协议预置 `OpenAI` = off / minimal / low / medium / high / xhigh / max，`Anthropic` = off / low / medium / high / xhigh / max；默认勾 off / low / high / max；一个都不勾 = 不支持思考。插件不区分路由是否 hand-declared：DSH 0.2.1 官方也会给 hand-declared 路由渲染它自己的推理控件（`ModelReasoningEfforts`），本插件注入自己的「协议预置」UI 后会按行把官方那套隐藏，保证一行只有一套思考强度编辑。
+- **思考强度**（只有第三方网关 `llm-pi-ai`、且**官方没有渲染推理控件**的模型行有）—— 协议预置 `OpenAI` = off / minimal / low / medium / high / xhigh / max，`Anthropic` = off / low / medium / high / xhigh / max；默认勾 off / low / high / max；一个都不勾 = 不支持思考。原则是**官方有的我们就不提供**：DSH 0.2.1 官方已给 hand-declared 路由渲染推理控件（`ModelReasoningEfforts`），这些行插件按行探测到官方控件后不再提供自己的编辑器，只留摘要 / 容量 / 一句提示；官方没有控件的行（如 0.2.0 的 declared 路由）才由插件补预置 UI。
 - **容量快捷填入** —— 官方「上下文窗口 / 最大输出」输入框旁的 `1M` / `128K` 按钮；新建模型行展开容量时自动填好 1000000 / 131072。
 - 官方 DeepSeek（`llm-deepseek`）没有每模型思考强度（档位是提供方级 `thinking` / `reasoningEffort`），插件只补容量 + 摘要，不提供提供方级面板。
 - 插件**只写 `reasoningEfforts`**，不写 `input` / `inputModalities`，也不重复注入官方已有的多模态控件（官方模型行自 0.2.0 起自带 `ModelInputTypes`）。
@@ -89,12 +89,12 @@
 **怎么用**
 
 1. 打开 **设置 → 模型**，选一个提供方（比如 `llm-pi-ai`）→ **编辑**。
-2. 找到要改的模型那一行，点 **「容量」** 展开：顶部是当前配置摘要；`llm-pi-ai` 路由会显示思考强度编辑器；底部是 `1M` / `128K` 按钮。
+2. 找到要改的模型那一行，点 **「容量」** 展开：顶部是当前配置摘要；插件管理的 `llm-pi-ai` 行会显示思考强度编辑器（官方已渲染推理控件的行不显示，只提示由官方控件管理）；底部是 `1M` / `128K` 按钮。
 3. 改完点官方 **「保存」** 才真正写入；点官方「取消」丢弃这次改动。
 
 > 截图是 0.1.0 旧版，仍能看到 0.1.1 已删除的重复「多模态」单选框；实际界面多模态只保留官方原生控件。
 
-**第三方网关（`llm-pi-ai`）** —— 思考强度 + 容量快捷：
+**第三方网关（`llm-pi-ai`）** —— 官方没有渲染推理控件的行：思考强度 + 容量快捷：
 
 ![llm-pi-ai 模型行展开：思考强度选 OpenAI 预置（默认勾 off/low/high/max）+ 1M / 128K](docs/images/model-capabilities-third-party.png)
 
