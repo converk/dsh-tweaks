@@ -72,11 +72,11 @@ plugins/<name>/
 |---|---|---|
 | `prompt-history` | 维护中 | 0.2.0 – 0.2.1（**0.1.1**：多段文本换行防御性修复、`Shift+↑/↓` 放行、补纯逻辑自测） |
 | `smart-list` | 维护中 | 0.2.0 – 0.2.1（**0.1.0**：初版，Shift+Enter 后自动续写列表标记；用 `insertText` 插入 `\n + 标记`，不重写草稿） |
-| `model-capabilities` | 维护中 | 0.2.0 – 0.2.1（**0.1.1**：删除与官方重复的多模态控件；declared pi-ai 路由按官方 `ModelReasoningEfforts` 运行期探测；只写 `reasoningEfforts`；补 `llm-deepseek` / `llm-deepseek-account` 提供方级面板） |
+| `model-capabilities` | 维护中 | 0.2.0 – 0.2.1（**0.1.2**：撤销 0.1.1 的非 bug 修复展示改动——恢复插件自己的「协议预置」思考 UI、删除官方推理控件探测/接管与 DeepSeek/account 提供方级面板；保留只写 `reasoningEfforts`、不重复官方多模态的修复。**0.1.1**：删除与官方重复的多模态控件；只写 `reasoningEfforts`） |
 | `git-bash-terminal-tool` | 维护中 | 0.2.0 – 0.2.1（**0.5.0**：安装根目录探测 / 文件名校验 / 半注册回滚 / `/state` 失败降级 / 不默认探测版本 / cwd 跟随 `working_directory`；**0.4.1** 已发布，修 0.2.1 的设置行只读） |
 | `turn-file-revert` | **已停止维护（2026-09；2026-10 已从插件市场移除）** | **只到 0.2.0，不再跟进** |
 
-**最低支持 DSH 0.2.0**（0.1.7 已不支持；0.2.1 是契约基线与核对口径）。2026-10 合并 PR #3 后的版本事实：`git-bash-terminal-tool` **0.5.0**（按 0.2.1 契约对齐运行期 + 审计修复）、`model-capabilities` **0.1.1**、`prompt-history` **0.1.1**、`smart-list` **0.1.0**；四者都继续支持 **0.2.0 – 0.2.1**（各插件增量见上表）。`git-bash-terminal-tool` 的 **0.4.1** 已发布（修 0.2.1 删除 `ConfigFormSnapshot.mode` 导致的设置行只读），0.5.0 已包含该修复。
+**最低支持 DSH 0.2.0**（0.1.7 已不支持；0.2.1 是契约基线与核对口径）。2026-10 合并 PR #3 后的版本事实：`git-bash-terminal-tool` **0.5.0**（按 0.2.1 契约对齐运行期 + 审计修复）、`model-capabilities` **0.1.2**（撤销 PR 里该插件的非 bug 修复展示改动，保留 bug 修复；npm 上最新仍是 0.1.1）、`prompt-history` **0.1.1**、`smart-list` **0.1.0**；四者都继续支持 **0.2.0 – 0.2.1**（各插件增量见上表）。`git-bash-terminal-tool` 的 **0.4.1** 已发布（修 0.2.1 删除 `ConfigFormSnapshot.mode` 导致的设置行只读），0.5.0 已包含该修复。
 
 **`turn-file-revert` 的例外规则（强制）**：该能力官方 DSH 0.2.x **已内置**（回合改动卡片 + 逐文件 diff 复核），所以本仓库从 2026-09 起停止维护。之后的 DSH 升级、契约审计、兼容性核对、CI、发布**一律忽略这个插件**——只保证到 **0.2.0**，在更新的 DSH 上不保证可用也不再修；版本号停在 `0.1.1`（已作为最后一次发布发出）：不要再 bump、不要打 tag / 发布、不要加进任何 profile 的 `dsh.profile.bundles`；该插件已从插件市场（awesome-dsh-plugin）下架（2026-10）：不要再把它加回 `market/`，也不要向上游市场提条目。源码与 README 保留只作参考（DOM 增补写法仍有教学价值），但**不要「顺手修一下」**，也不要为它改仓库其他部分。唯一例外：它**阻塞**了其他插件或 DSH 本身（如依赖冲突）时才允许最小处置，并在提交信息里写明原因。
 

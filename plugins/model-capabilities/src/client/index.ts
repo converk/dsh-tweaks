@@ -2,9 +2,9 @@
  * dsh-tweaks-model-capabilities — 浏览器半区入口。
  *
  * 向 `settings.models.provider-card`（keyed，entryKey = settingsNs）注册
- * `llm-pi-ai` / `llm-deepseek` / `llm-deepseek-account` 的席位。
- * pi-ai 席位渲染隐藏锚点（行内控件由 `augment.ts` 注入）；DeepSeek 席位额外渲染
- * 提供方级 thinking / reasoningEffort 面板。
+ * `llm-pi-ai` / `llm-deepseek` 的席位。席位本身只渲染隐藏锚点：官方模型行内部
+ * 没有 Slot，行内的「思考强度 / 1M·128K」控件由 `augment.ts` 注入到模型行的
+ * 「容量」展开区。
  *
  * 依赖与生命周期：
  * - 服务通过 cordis 的 `inject` 声明后从 ctx 取。**`remote.settings` 必须声明**：
@@ -32,8 +32,8 @@ import type {
 } from './types.js'
 import type { SettingsPathOp } from './capability.js'
 
-/** 本插件在 `settings.models.provider-card` 上占用的 key（= 适配器的 settingsNs；含 account 路由）。 */
-export const PROVIDER_CARD_KEYS = ['llm-pi-ai', 'llm-deepseek', 'llm-deepseek-account'] as const
+/** 本插件在 `settings.models.provider-card` 上占用的 key（= 适配器的 settingsNs）。 */
+export const PROVIDER_CARD_KEYS = ['llm-pi-ai', 'llm-deepseek'] as const
 
 /** 硬依赖：席位、文案、Host 远程面与 settings 子命名空间；由 cordis 注入并在就绪后激活。 */
 export const inject = ['slots', 'locale', 'remote', 'remote.settings']
@@ -124,8 +124,8 @@ export function apply(ctx: PluginClientContextLike): void {
 
   const api = createCapabilityApi(ctx, t)
 
-  // 同一份实现挂三个 key：pi-ai 的思考强度 + 容量快捷；DeepSeek 的容量快捷 +
-  // 提供方级面板；account 路由没有模型行，只有提供方级面板。
+  // 同一份实现挂两个 key：llm-pi-ai（思考强度 + 容量快捷）与 llm-deepseek
+  // （只有容量快捷，DeepSeek 的思考档位是提供方级设置，插件不写）。
   for (const key of PROVIDER_CARD_KEYS) {
     slots.inject('settings.models.provider-card', () =>
       slots.register({ name: 'settings.models.provider-card', key }, (props) =>

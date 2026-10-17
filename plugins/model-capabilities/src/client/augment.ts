@@ -2,17 +2,14 @@
  * 官方模型行的行内能力控件。
  *
  * 官方 `settings.models.provider-card` 席位只到**提供方卡片**一级，模型行内部
- * 没有扩展点；所以这里在席位挂载后观察卡片子树，把「官方没提供的思考强度」
- * 和「容量摘要 / 1M·128K」注入到每个模型行展开后的 `_modelAdvanced`。
+ * 没有扩展点；所以这里在席位挂载后观察卡片子树，把「思考强度」和
+ * 「容量摘要 / 1M·128K」注入到每个模型行展开后的 `_modelAdvanced`。
  *
  * 多模态属于官方模型行（`ModelInputTypes`，0.2.0 基线即有），本文件**不再**注入：
  * 重复注入会和官方草稿打架，也会覆盖继承的图片能力。
  *
- * 思考强度的归属**逐行运行期探测**（不按版本号猜、也不按 `declared` 静态一刀切）：
- * 0.2.1 起官方给 hand-declared pi-ai 路由渲染原生推理控件（DOM 局部名
- * `_modelReasoning*`），行展开后探测到它就把该行交给官方（只显示「由官方控件管理」
- * 提示，不产生挂起草稿、不写 `reasoningEfforts`）；0.2.0 没有该组件 → 按原逻辑
- * 注入插件控件（declared 路由同样补上，否则 0.2.0 的思考编辑会整块消失）。
+ * 思考强度由插件自己的「协议预置」UI 管理（0.2.1 官方对 hand-declared pi-ai 路由
+ * 也会渲染原生推理控件，但那是官方 UI，插件不探测、不接管、不隐藏）。
  *
  * 交互（用户拍板）：
  * - 思考强度用「协议预置」选词表：OpenAI = off/minimal/low/medium/high/xhigh/max，
@@ -43,8 +40,6 @@ import {
   getPath,
   isJsonArray,
   listStoredModels,
-  officialManagesRowReasoning,
-  pluginManagesRowReasoning,
   presetLevels,
   reasoningPreset,
 } from './capability.js'
@@ -102,12 +97,6 @@ interface RowState {
   preset: ReasoningPresetId
   /** 用户层条目里是否写过 `reasoningEfforts`；没写过 = 展开时套用预置默认。 */
   reasoningConfigured: boolean
-  /**
-   * 本行展开区是否渲染了官方推理控件（运行期探测结果）。
-   * undefined = 还没展开过；false = 官方没渲染该控件（0.2.0 / 0.2.1 的非 declared
-   * 路由 / DeepSeek），pi-ai 行此时由插件补，DeepSeek 走提供方级字段。
-   */
-  officialControl?: boolean
 }
 
 /** 建元素。 */
@@ -166,22 +155,6 @@ function insideOwnControls(node: Node | null): boolean {
     current = current.parentNode
   }
   return false
-}
-
-/**
- * 官方 hand-declared pi-ai 路由推理控件的 CSS 局部名片段。
- *
- * 0.2.1 起官方给 `declared === true` 的 pi-ai 模型行渲染 `ModelReasoningEfforts`
- * （DOM class 形如 `<hash>_modelReasoningHead` / `<hash>_modelReasoningRow`）；
- * 0.2.0 的官方产物里没有任何 `modelReasoning` 局部名。归谁管必须按**运行期 DOM
- * 探测**决定：写死版本号会随官方产物布局漂移而静默失效，静态 `declared` 一刀切
- * 又会让 0.2.0 的整块思考编辑功能消失。
- */
-const OFFICIAL_REASONING_FRAGMENT = '_modelReasoning'
-
-/** 行内是否真的渲染了官方推理控件（按行探测；官方行展开后的同一帧子树里）。 */
-function detectOfficialReasoning(row: HTMLElement): boolean {
-  return row.querySelector(`[class*="${OFFICIAL_REASONING_FRAGMENT}"]`) !== null
 }
 
 /** 用户层条目里有没有写过 `reasoningEfforts`（没写过 = 未配置，展开时套用预置默认）。 */
@@ -254,18 +227,9 @@ export function augment(options: AugmentOptions): AugmentHandle {
   const t = api.t
   const settingsNs = options.settingsNs
   const settingsPath = [...options.settingsPath]
-  // DeepSeek 的两个官方提供方（api-key / account）都没有每模型思考强度。
-  const isDeepSeek = settingsNs === 'llm-deepseek' || settingsNs === 'llm-deepseek-account'
-
-  /** 本行是否由官方推理控件管理（判定规则在纯逻辑层，便于自测）。 */
-  function officialManaged(state: RowState): boolean {
-    return officialManagesRowReasoning(isDeepSeek, state.officialControl === true)
-  }
-
-  /** 本行是否由插件注入思考强度控件（0.2.0 的 pi-ai 行 / 0.2.1 官方没渲染控件的行）。 */
-  function pluginManaged(state: RowState): boolean {
-    return pluginManagesRowReasoning(isDeepSeek, state.officialControl === true)
-  }
+  // llm-deepseek 没有每模型思考强度（DeepSeek 的档位是提供方级的）；只有 pi-ai 有。
+  const isDeepSeek = settingsNs === 'llm-deepseek'
+  const manageReasoning = !isDeepSeek
 
   const rows = new Map<HTMLElement, RowState>()
   let storedModels = new Map<string, JsonObject>()
@@ -434,9 +398,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
       }
     }
     const text = t('summary', {
-      reasoning: pluginManaged(state)
-        ? reasoningText(draft)
-        : officialManaged(state) ? t('reasoningOfficial') : providerReasoningText(),
+      reasoning: manageReasoning ? reasoningText(draft) : providerReasoningText(),
       context,
       max,
     })
@@ -486,8 +448,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
   /** 展开时控件该显示的草稿：挂起值优先，其次已存值，未配置思考时套用预置默认。 */
   function initialDraftFor(state: RowState): ModelCapabilityDraft {
     const stored = state.stored ?? emptyDraft()
-    // 官方管理的行没有插件档位可勾：一律显示已存值（= 不产生挂起草稿）。
-    if (!pluginManaged(state) || state.reasoningConfigured) return stored
+    if (!manageReasoning || state.reasoningConfigured) return stored
     return { reasoning: reasoningPreset(state.preset) }
   }
 
@@ -508,13 +469,12 @@ export function augment(options: AugmentOptions): AugmentHandle {
     const summary = el('p', 'dshMc_summary')
     summary.dataset.dshMc = 'summary'
 
-    // 只有插件管理的 pi-ai 行才有每模型思考强度；DeepSeek 是提供方级，
-    // 官方已渲染推理控件的行交给官方。
+    // 只有 llm-pi-ai 有每模型思考强度；DeepSeek 的档位是提供方级的（只读展示）。
     let reasoningField: HTMLElement | undefined
     let presetSelect: HTMLSelectElement | undefined
     let levelChecks: Partial<Record<ThinkingLevel, HTMLInputElement>> = {}
     let levelInputs: Partial<Record<ThinkingLevel, HTMLInputElement>> = {}
-    if (pluginManaged(state)) {
+    if (manageReasoning) {
       const field = el('div', 'dshMc_field')
       field.append(el('span', 'dshMc_label', t('reasoning')))
       const preset = selectEl('dshMc_select')
@@ -597,11 +557,7 @@ export function augment(options: AugmentOptions): AugmentHandle {
 
     container.append(summary)
     if (reasoningField !== undefined) container.append(reasoningField)
-    else {
-      container.append(
-        el('p', 'dshMc_hint', t(isDeepSeek ? 'reasoningProviderHint' : 'reasoningOfficialHint')),
-      )
-    }
+    else container.append(el('p', 'dshMc_hint', t('reasoningProviderHint')))
     container.append(actions)
 
     state.container = container
@@ -766,12 +722,6 @@ export function augment(options: AugmentOptions): AugmentHandle {
     const states: RowState[] = []
     for (const state of rows.values()) {
       if (state.pending === undefined) continue
-      // 探测到官方推理控件的行绝不进入本次写入：不能把插件草稿里的
-      // `reasoningEfforts` 写回官方管理的模型条目（会和官方草稿打架）。
-      if (officialManaged(state)) {
-        state.pending = undefined
-        continue
-      }
       const id = readModelId(state.row) || state.modelId
       if (id.trim().length === 0) continue
       state.modelId = id
@@ -808,9 +758,8 @@ export function augment(options: AugmentOptions): AugmentHandle {
       settingsPath,
       edits,
       visibleModelIds: visibleSnapshot ?? visibleModelIds(),
-      // pi-ai 的每模型 reasoningEfforts 仍归插件管（作用域只限真正注入了控件的行，
-      // 官方管理的行已在上面被过滤掉）；DeepSeek 没有每模型字段。
-      manageReasoning: !isDeepSeek,
+      // pi-ai 有每模型 reasoningEfforts；DeepSeek 没有（也不该为它物化 models）。
+      manageReasoning,
     })
     if (plan.issues.length > 0) {
       for (const issue of plan.issues) {
@@ -970,22 +919,6 @@ export function augment(options: AugmentOptions): AugmentHandle {
       if (advanced === undefined) {
         state.container = undefined
         continue
-      }
-      // 归属运行期探测：官方推理控件与展开区在官方的同一次 React 提交里渲染，
-      // MutationObserver 回调（→ rAF 的 sync）看到的已经是提交后的 DOM，因此
-      // 0.2.1 上第一次注入前就能探测到官方控件（不会出现双份），0.2.0 上没有
-      // 该组件则注入插件控件。万一官方控件晚一帧出现，它本身就是 DOM 变更，
-      // 会再触发 observer → 这里按行重建。
-      const officialControl = detectOfficialReasoning(row)
-      if (state.officialControl !== officialControl) {
-        // 归属切换：官方刚接管 = 丢弃本行草稿（绝不把 reasoningEfforts 写回）；
-        // 插件刚接管 = 用已存值重建控件。
-        state.officialControl = officialControl
-        state.pending = undefined
-        state.error = undefined
-        state.notice = undefined
-        state.container?.remove()
-        state.container = undefined
       }
       if (state.container === undefined || !advanced.contains(state.container)) {
         injectRow(state, advanced)

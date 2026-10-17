@@ -1,28 +1,23 @@
 /**
  * dsh-tweaks-model-capabilities 纯逻辑自测。
  *
- * 只测 lib/capability.js（由 node build.mjs 产出）与 src/shared/provider-reasoning.ts
- * （现场 bundle 成 ESM），不碰 DOM / React / DSH：
+ * 只测 `lib/capability.js`（由 `node build.mjs` 产出），不碰 DOM / React / DSH：
  *   node build.mjs && node scripts/selftest.mjs
  *
  * 覆盖：7 档；一个档都不勾 = 不支持思考（false）；只勾 off 被拒；非 off 档空拼写
  * 被拒；未勾选档不写键；只写 reasoningEfforts、不碰官方多模态；manageReasoning=false
- * （DeepSeek / 官方已管理推理的行）不产生字段与 op；models[] 数组模式保留其它条目
- * 与 name/compat；没有 models[] 时用官方编辑器可见 id 完整物化并删 modelOverrides；
- * 未保存模型被拒；协议预置只填档位表、绝不写 compat；DeepSeek 提供方级
- * thinking / reasoningEffort 的读取、校验与 path ops。
+ * （DeepSeek 没有每模型字段）不产生字段与 op；models[] 数组模式保留其它条目与
+ * name/compat；没有 models[] 时用官方编辑器可见 id 完整物化并删 modelOverrides；
+ * 未保存模型被拒；协议预置只填档位表、绝不写 compat。
  *
  * DSH 契约防漂移段：插件源码里的裸字符串 +（有部署时）官方产物原文。
- * 官方契约分两类：最低支持 0.2.0 内的硬契约必须全绿；只在 0.2.1 出现的契约
- * （ModelReasoningEfforts / _modelReasoning 局部名 / account 的 modelOverrides）
- * 按目标 DSH 版本条件化——0.2.0 上跳过而不是报红，0.2.1 上硬查。
+ * 任一官方片段消失 = 契约已漂移，自测必须报红。
  */
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { build } from 'esbuild'
 
 const modulePath = new URL('../lib/capability.js', import.meta.url)
 if (!existsSync(modulePath)) {
@@ -31,27 +26,11 @@ if (!existsSync(modulePath)) {
 }
 const cap = await import(modulePath.href)
 
-// provider-reasoning 是纯逻辑，但没有单独的 lib 入口；现场 bundle 成 ESM data URL。
-const providerBuilt = await build({
-  entryPoints: [fileURLToPath(new URL('../src/shared/provider-reasoning.ts', import.meta.url))],
-  bundle: true,
-  write: false,
-  format: 'esm',
-  platform: 'node',
-  target: 'node22',
-  logLevel: 'silent',
-})
-const provider = await import(
-  'data:text/javascript;base64,' + Buffer.from(providerBuilt.outputFiles[0].text, 'utf8').toString('base64')
-)
-
 // 官方产物里的模板串 / 占位符用字符码拼（本文件保持无模板字面量，方便纯文本核对）。
 const TICK = String.fromCharCode(96)
 const DOLLAR = String.fromCharCode(36)
 
 let passed = 0
-/** 因目标 DSH 版本低于 onlySince 而跳过的条件契约条数。 */
-let skipped = 0
 const failures = []
 
 /** 跑一个用例；失败不中断，最后统一退出码。 */
@@ -142,28 +121,6 @@ test('draftsEqual / copyDraft', () => {
   const copy = cap.copyDraft(custom)
   assert.deepEqual(copy, custom)
   assert.notEqual(copy.reasoning, custom.reasoning)
-})
-
-// ---------------------------------------------------------------------------
-// P0：思考强度的归属判定（运行期探测的纯逻辑部分）
-//
-// 插件不按版本号、也不按 provider.declared 静态判断，而是逐行探测官方推理控件
-// 是否真的渲染（augment.ts 里的 _modelReasoning DOM 判据），再把探测结果交给
-// 这里判定归属。0.2.0 没有官方组件 -> declared 路由也必须由插件补。
-// ---------------------------------------------------------------------------
-
-test('P0 归属判定：0.2.1 的 declared 行交官方，0.2.0 / 非 declared 行由插件补', () => {
-  // 0.2.0：官方产物里没有 ModelReasoningEfforts -> 所有 pi-ai 行（含 declared）插件补。
-  assert.equal(cap.officialManagesRowReasoning(false, false), false)
-  assert.equal(cap.pluginManagesRowReasoning(false, false), true)
-  // 0.2.1：hand-declared pi-ai 行探测到官方控件 -> 交给官方，插件不写回。
-  assert.equal(cap.officialManagesRowReasoning(false, true), true)
-  assert.equal(cap.pluginManagesRowReasoning(false, true), false)
-  // DeepSeek 两个命名空间始终没有每模型控件（提供方级字段另由面板管理）。
-  assert.equal(cap.officialManagesRowReasoning(true, false), false)
-  assert.equal(cap.pluginManagesRowReasoning(true, false), false)
-  assert.equal(cap.officialManagesRowReasoning(true, true), false)
-  assert.equal(cap.pluginManagesRowReasoning(true, true), false)
 })
 
 // ---------------------------------------------------------------------------
@@ -343,7 +300,7 @@ test('fieldValuesFromDraft: manageReasoning=false 不产生字段、也不报档
   assert.deepEqual(values, {})
 })
 
-test('buildModelOps: manageReasoning=false 的编辑不产生 op（官方管理 / DeepSeek 的行不写回）', () => {
+test('buildModelOps: manageReasoning=false 的编辑不产生 op（DeepSeek 没有插件可写字段）', () => {
   const plan = cap.buildModelOps({
     userSection: {
       providers: {
@@ -360,7 +317,7 @@ test('buildModelOps: manageReasoning=false 的编辑不产生 op（官方管理 
   assert.deepEqual(plan.ops, [])
 })
 
-test('buildModelOps: manageReasoning=false 绝不为官方管理的行物化 models', () => {
+test('buildModelOps: manageReasoning=false 绝不为空改动物化 models', () => {
   const plan = cap.buildModelOps({
     userSection: {},
     settingsPath: PATH,
@@ -463,46 +420,6 @@ test('CAPACITY_PRESETS: 第一个就是 1M / 128K 的确切值', () => {
 })
 
 // ---------------------------------------------------------------------------
-// DeepSeek 提供方级 thinking / reasoningEffort（纯逻辑）
-// ---------------------------------------------------------------------------
-
-test('providerReasoningFrom: 只接受合法枚举，缺失 / 非法当空', () => {
-  assert.deepEqual(provider.providerReasoningFrom({ thinking: 'disabled', reasoningEffort: 'off' }), {
-    thinking: 'disabled',
-    effort: 'off',
-  })
-  assert.deepEqual(provider.providerReasoningFrom({ thinking: 'what', reasoningEffort: 42 }), {
-    thinking: '',
-    effort: '',
-  })
-  assert.deepEqual(provider.providerReasoningFrom(undefined), provider.emptyProviderReasoning())
-})
-
-test('providerReasoningOps: 空 = unset，非空 = set，未变不写', () => {
-  const current = { thinking: 'enabled', effort: 'high' }
-  const next = { thinking: '', effort: 'max' }
-  assert.deepEqual(provider.providerReasoningOps(current, next), [
-    { op: 'unset', path: ['thinking'] },
-    { op: 'set', path: ['reasoningEffort'], value: 'max' },
-  ])
-  assert.deepEqual(provider.providerReasoningOps(current, current), [])
-})
-
-test('validateProviderReasoning: thinking=disabled 与 effort 冲突被拒', () => {
-  assert.equal(provider.validateProviderReasoning({ thinking: 'disabled', effort: 'high' }), 'thinking-disabled-effort')
-  assert.equal(provider.validateProviderReasoning({ thinking: 'disabled', effort: 'off' }), undefined)
-  assert.equal(provider.validateProviderReasoning({ thinking: 'disabled', effort: '' }), undefined)
-  assert.equal(provider.validateProviderReasoning({ thinking: 'enabled', effort: 'high' }), undefined)
-})
-
-test('providerReasoningOps: 先写 thinking 再写 effort，path 顺序稳定', () => {
-  assert.deepEqual(provider.providerReasoningOps({ thinking: '', effort: '' }, { thinking: 'enabled', effort: 'low' }), [
-    { op: 'set', path: ['thinking'], value: 'enabled' },
-    { op: 'set', path: ['reasoningEffort'], value: 'low' },
-  ])
-})
-
-// ---------------------------------------------------------------------------
 // DSH 契约防漂移
 //
 // 本插件的失效模式全是**静默**的：服务名 / slot 键 / 事件名 / DOM 类名写错，
@@ -513,7 +430,7 @@ test('providerReasoningOps: 先写 thinking 再写 effort，path 顺序稳定', 
 // 官方片段消失 = 该契约已漂移，自测必须报红。
 // ---------------------------------------------------------------------------
 
-test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判据 / P0 探测判据', () => {
+test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判据', () => {
   const clientIndex = readFileSync(new URL('../src/client/index.ts', import.meta.url), 'utf8')
   const clientTypes = readFileSync(new URL('../src/client/types.ts', import.meta.url), 'utf8')
   const augment = readFileSync(new URL('../src/client/augment.ts', import.meta.url), 'utf8')
@@ -525,8 +442,8 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
   // keyed slot 的键必须等于提供方的 settingsNs（官方按 entryKey 派发）。
   assert.ok(clientIndex.includes("'settings.models.provider-card'"), 'slot 键')
   assert.ok(
-    clientIndex.includes("PROVIDER_CARD_KEYS = ['llm-pi-ai', 'llm-deepseek', 'llm-deepseek-account']"),
-    '提供方 settingsNs（含 account 路由）',
+    clientIndex.includes("PROVIDER_CARD_KEYS = ['llm-pi-ai', 'llm-deepseek']"),
+    '提供方 settingsNs',
   )
   // 官方 remote 事件名（白名单常量 API_REMOTE_FORWARDED_EVENTS 的成员）。
   assert.ok(clientIndex.includes("'settings/document-updated'"), '设置变更事件名')
@@ -548,20 +465,14 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
   }
   assert.ok(augment.includes('input[type="text"], input:not([type])'), '模型 ID 输入框判据')
 
-  // P0：官方推理控件必须按行运行期探测（CSS 局部名 _modelReasoning），
-  // 不能按 provider.declared 静态一刀切（0.2.0 没有该组件，静态跳会丢整块功能）。
-  assert.ok(
-    augment.includes("const OFFICIAL_REASONING_FRAGMENT = '_modelReasoning'"),
-    'P0 探测判据丢了官方推理控件的 CSS 局部名',
-  )
-  const probeSelector = '[class*="' + DOLLAR + '{OFFICIAL_REASONING_FRAGMENT}"]'
-  assert.ok(augment.includes(probeSelector), 'P0 探测必须按 class* 子串匹配官方推理控件')
-  assert.ok(augment.includes('officialManagesRowReasoning'), 'P0 归属判定必须走纯逻辑层')
-  assert.equal(augment.includes('options.declared === true'), false, '不得再按 declared 静态一刀切')
-  assert.ok(augment.includes('manageReasoning: !isDeepSeek'), 'pi-ai 的每模型 reasoningEfforts 仍归插件管')
-  assert.ok(augment.includes('if (officialManaged(state))'), '官方管理的行必须在写入前被过滤')
+  // 思考强度由插件自己的预置 UI 管理：pi-ai 恒定由插件维护，不跟随官方原生控件。
+  assert.ok(augment.includes('const manageReasoning = !isDeepSeek'), 'pi-ai 的每模型 reasoningEfforts 归插件管')
+  assert.ok(augment.includes('if (manageReasoning) {'), '放置点按 manageReasoning 建思考控件')
+  assert.equal(augment.includes('_modelReasoning'), false, '不得再探测 / 接管官方原生推理控件')
+  assert.equal(augment.includes('officialManaged'), false, '不得再按官方归属过滤写入')
+  assert.equal(clientIndex.includes('llm-deepseek-account'), false, '不得再为 account 路由挂提供方面板')
 
-  // 0.1.1 起不再注入 / 维护官方已有的多模态控件。
+  // 0.1.1 起不再注入 / 维护官方已有的多模态控件（官方 ModelInputTypes 负责）。
   assert.equal(augment.includes('dshMc_radios'), false, '不得再注入多模态 radio')
   assert.equal(augment.includes('inputRadios'), false, '不得再维护多模态控件状态')
 
@@ -569,9 +480,13 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
   assert.ok(capabilitySource.includes('next.reasoningEfforts = values.reasoningEfforts'), '只写 reasoningEfforts')
   assert.equal(/next\.input(Modalities)?\s*=/.test(capabilitySource), false, '不得再写 input / inputModalities')
 
-  // DeepSeek 提供方级面板（account 路由也挂）。
-  assert.ok(anchor.includes('ProviderReasoningPanel'), 'DeepSeek 提供方级面板')
-  assert.ok(anchor.includes("'llm-deepseek-account'"), 'account 路由也挂面板')
+  // 席位列出的锚点必须仍是隐藏的 span（面板 / 可见 UI 都在行内注入里）。
+  assert.ok(anchor.includes('hidden data-dsh-mc-anchor'), '席位只渲染隐藏锚点')
+  assert.equal(anchor.includes('ProviderReasoningPanel'), false, '提供方级面板已删除')
+
+  // 已删除的非 bug 修复模块不得被重新引入（纯逻辑自测无法覆盖文件存在性）。
+  assert.equal(existsSync(new URL('../src/client/provider-panel.tsx', import.meta.url)), false, 'provider-panel 应已删除')
+  assert.equal(existsSync(new URL('../src/shared/provider-reasoning.ts', import.meta.url)), false, 'provider-reasoning 应已删除')
 })
 
 // ---------------------------------------------------------------------------
@@ -658,9 +573,6 @@ test('官方产物解析：0.2.0 旧布局 / 0.2.1 exports 条件 / 缺失返回
 /**
  * 官方产物里必须逐字出现的契约原文（任一片段消失 = 契约漂移）。
  * path 相对 <部署>/node_modules/@deepseek-ai。
- *
- * onlySince：该契约从哪个 DSH 版本开始存在。目标部署版本低于它时跳过
- * （最低支持 0.2.0 内只要求硬契约全绿；0.2.1 才有的契约不能把 0.2.0 弄红）。
  */
 
 // 官方 gateway 产物里有一行反引号模板串（service key 的构造）；本文件不能含
@@ -740,7 +652,12 @@ const OFFICIAL_CONTRACT_FACTS = [
     includes: ['function ModelInputTypes(', 'modelInputTypes'],
   },
   {
-    name: 'keyed slot 注册必须带 key（插件正是按 key 挂三个提供方）',
+    name: 'slots 服务名与 slots.inject(key, callback) / keyed 必填 key',
+    path: 'dsh-client-ui-renderer/lib/client.js',
+    includes: ['super(ctx, "slots");', 'inject(key, callback) {'],
+  },
+  {
+    name: 'keyed slot 注册必须带 key（插件正是按 key 挂两个提供方）',
     // 0.2.0 的 SlotCore 在独立包 dsh-client-ui-slots；0.2.1 起该包只是渲染层的
     // devDependency（npm 完整安装里没有），SlotCore 被内联进 web 前端种子模块产物，
     // 所以先按包解析，缺失时回退到前端 dist 里找同一段 keyed 校验。
@@ -772,43 +689,14 @@ const OFFICIAL_CONTRACT_FACTS = [
     includes: ['inputModalities: z.array(z.union(MODEL_MODALITIES)).min(1).default(["text"])'],
   },
   {
-    name: '三个提供方 entry id 仍是插件注册席位用的 llm-pi-ai / llm-deepseek / llm-deepseek-account',
+    name: '两个提供方 entry id 仍是插件注册席位用的 llm-pi-ai / llm-deepseek',
     path: 'dsh-base/cordis.patch.yml',
-    includes: ['- id: llm-pi-ai', '- id: llm-deepseek', '- id: llm-deepseek-account'],
-  },
-  {
-    name: 'DeepSeek 提供方级 thinking / reasoningEffort 是官方 Config 根字段（插件提供方面板写入）',
-    path: 'dsh-llm-deepseek/lib/index.js',
-    includes: ['thinking: z.union(["enabled", "disabled"]).volatile()', 'reasoningEffort: z.union(['],
-  },
-  // ---- 只在 0.2.1 出现（0.2.0 没有这些组件 / 字段） ---------------------------------
-  {
-    name: '官方给 hand-declared pi-ai 路由渲染原生推理控件 ModelReasoningEfforts',
-    onlySince: '0.2.1',
-    path: 'dsh-client-ui-settings-models/lib/client.js',
-    includes: [
-      'function ModelReasoningEfforts(',
-      'reasoningLevels: props.reasoningLevels',
-      'props.reasoningLevels !== void 0 && props.reasoningLevels.length > 0 ?',
-    ],
-  },
-  {
-    name: 'P0 运行期探测判据：官方推理控件的 CSS 局部名 _modelReasoning',
-    onlySince: '0.2.1',
-    path: 'dsh-client-ui-settings-models/lib/client.js',
-    includes: ['_modelReasoning', '"modelReasoning": '],
-  },
-  {
-    name: 'DeepSeek account 路由 0.2.1 起没有 models、单模型用 modelOverrides（插件只补提供方级根字段）',
-    onlySince: '0.2.1',
-    path: 'dsh-llm-deepseek-account/lib/index.js',
-    includes: ['models is no longer configurable', 'modelOverrides'],
+    includes: ['- id: llm-pi-ai', '- id: llm-deepseek'],
   },
 ]
 
 /**
  * 顺序 / 结构判据：单纯「包含」表达不了的契约。
- * onlySince 含义同 OFFICIAL_CONTRACT_FACTS。
  * @returns 失败原因；通过时 undefined。
  */
 const OFFICIAL_STRUCTURE_CHECKS = [
@@ -841,29 +729,6 @@ const OFFICIAL_STRUCTURE_CHECKS = [
       if (inputTypes < 0) return 'missing ModelInputTypes control'
       if (capacity < advanced) return 'capacity inputs are no longer inside modelAdvanced'
       if (inputTypes < capacity) return 'input-type control no longer follows the capacity inputs'
-      return undefined
-    },
-  },
-  {
-    name: '官方推理控件只给 declared pi-ai 路由渲染，且挂在展开区输入类型控件之后（P0 探测前提）',
-    onlySince: '0.2.1',
-    path: 'dsh-client-ui-settings-models/lib/client.js',
-    check(source) {
-      const declaredGate =
-        'layout === "pi-ai" && props.declared === true ? reasoningLevelChoices(namespace, schema) : []'
-      const rowProp = 'reasoningLevels: props.reasoningLevels'
-      const renderGate = 'props.reasoningLevels !== void 0 && props.reasoningLevels.length > 0 ?'
-      for (const fragment of [declaredGate, rowProp, renderGate, 'function ModelReasoningEfforts(']) {
-        if (!source.includes(fragment)) return 'missing ' + JSON.stringify(fragment)
-      }
-      const start = source.indexOf('function ModelRow(props)')
-      const region = source.indexOf('//#region', start + 1)
-      const body = source.slice(start, region < 0 ? start + 12000 : region)
-      const inputTypes = body.indexOf('(ModelInputTypes,')
-      const reasoning = body.indexOf(renderGate)
-      if (inputTypes < 0) return 'ModelInputTypes no longer rendered in ModelRow'
-      if (reasoning < 0) return 'ModelReasoningEfforts no longer rendered in ModelRow'
-      if (reasoning < inputTypes) return 'reasoning control precedes the input types control'
       return undefined
     },
   },
@@ -1027,41 +892,6 @@ function resolveOfficialRoots() {
   return roots
 }
 
-/**
- * 读目标 DSH 版本（@deepseek-ai 各包版本一致，取第一个读到的包）。
- * @returns 版本字符串；部署不完整 / 没有 package.json 时 undefined。
- */
-function officialVersionOf(root) {
-  for (const packageName of ['dsh', 'dsh-base', 'dsh-client-ui-settings-models']) {
-    const manifest = readOfficialPackageJson(root, packageName)
-    if (manifest !== undefined && typeof manifest.version === 'string') return manifest.version
-  }
-  return undefined
-}
-
-/** 版本 >= 最低版本（忽略 -rc 后缀；解析不了的段按 0 处理）。 */
-function versionAtLeast(version, minimum) {
-  const parse = (value) => String(value).split('-')[0].split('.').map((part) => Number(part))
-  const left = parse(version)
-  const right = parse(minimum)
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const a = left[index] ?? 0
-    const b = right[index] ?? 0
-    if (a !== b) return a > b
-  }
-  return true
-}
-
-/**
- * 条件契约（onlySince）在目标版本低于它时跳过：只用于 0.2.1 才出现的官方产物。
- * 版本读不到时同样跳过（避免把「部署没有 package.json」误报成契约漂移）。
- * @returns 是否跳过。
- */
-function skippedByVersion(entry, version) {
-  if (entry.onlySince === undefined) return false
-  return version === undefined || !versionAtLeast(version, entry.onlySince)
-}
-
 const officialRoots = resolveOfficialRoots()
 if (officialRoots.length === 0) {
   console.log(
@@ -1070,14 +900,8 @@ if (officialRoots.length === 0) {
   )
 } else {
   for (const root of officialRoots) {
-    const version = officialVersionOf(root)
-    test('官方契约原文 @ ' + root + (version === undefined ? '' : '（DSH ' + version + '）'), () => {
+    test('官方契约原文 @ ' + root, () => {
       for (const fact of OFFICIAL_CONTRACT_FACTS) {
-        if (skippedByVersion(fact, version)) {
-          skipped += 1
-          console.log('  skip ' + fact.name + '：目标 DSH ' + (version ?? '版本未知') + ' 低于 ' + fact.onlySince)
-          continue
-        }
         const file = resolveFactFile(root, fact)
         assert.ok(
           file !== undefined,
@@ -1092,11 +916,6 @@ if (officialRoots.length === 0) {
         }
       }
       for (const structure of OFFICIAL_STRUCTURE_CHECKS) {
-        if (skippedByVersion(structure, version)) {
-          skipped += 1
-          console.log('  skip ' + structure.name + '：目标 DSH ' + (version ?? '版本未知') + ' 低于 ' + structure.onlySince)
-          continue
-        }
         const file = join(root, structure.path)
         assert.ok(existsSync(file), '缺少官方产物 ' + structure.path)
         const source = readFileSync(file, 'utf8')
@@ -1115,4 +934,4 @@ if (failures.length > 0) {
   process.exit(1)
 }
 console.log('')
-console.log('all ' + passed + ' checks passed' + (skipped > 0 ? '（另有 ' + skipped + ' 条 0.2.1+ 条件契约按目标版本跳过）' : ''))
+console.log('all ' + passed + ' checks passed')
