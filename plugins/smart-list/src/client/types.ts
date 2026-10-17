@@ -21,16 +21,15 @@ export interface InputStateLike {
   readonly phase: 'plain' | 'adjudicating' | 'claimed' | 'submitting'
 }
 
-/** 选区跨度（detect 投影坐标 + 编辑器修订号）。 */
+/** 选区跨度（detect 投影坐标；官方 TokenSpan 还带 draftRev，插件只比较折叠与位置）。 */
 export interface TokenSpanLike {
   readonly start: number
   readonly end: number
-  readonly draftRev: number
 }
 
 /** 会话作用域 Slot 组件可用的公开输入动作（结构性窄化）。 */
 export interface InputActionsLike {
-  /** 把当前编辑器选区快照成带修订号的跨度。 */
+  /** 把当前编辑器选区快照成跨度。 */
   captureInsertion(): TokenSpanLike
   /** 在捕获的跨度处插入纯文本（一个字面 `\n` 就是一行）；返回是否成功。 */
   insertText(text: string, span: TokenSpanLike): boolean
@@ -41,17 +40,14 @@ export interface InputActionsLike {
  * 会话标准 props（由 Slot 运行时注入）+ 无业务 owner props。
  */
 export interface OverlaySlotProps {
-  readonly sessionId?: string | undefined
   readonly useInput?: SnapshotSelectorHook<InputStateLike> | undefined
   readonly inputActions?: InputActionsLike | undefined
 }
 
-/** cordis 客户端上下文的最小面（本插件只用 `get`，`effect` 可选）。 */
+/** cordis 客户端上下文的最小面（本插件只用 `get`）。 */
 export interface PluginClientContextLike {
   /** 读取可选服务；未挂载时为 undefined。 */
   get(name: string): unknown
-  /** 登记一次随插件卸载而撤销的副作用；极简运行时可能没有。 */
-  effect?(callback: () => (() => void) | void, label?: string): unknown
 }
 
 /** `slots` 服务的最小面（本插件只注入 + 注册一个列表项）。 */

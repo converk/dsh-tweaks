@@ -14,19 +14,20 @@
 import { ROUTE_DISCOVER, ROUTE_STATE } from '../shared/protocol.js'
 import { discoverBash } from './discover.js'
 import { diag } from './diag.js'
-import type { CandidateView, DiscoverView, StateView } from '../shared/protocol.js'
-import type { ConnectionServiceLike, FetchRouteLike, HostContextLike, LoggerLike } from './types.js'
+import type { BashCandidate } from './discover.js'
+import type { CandidateView, CapabilityView, DiscoverView, ReplaceReport, StateView } from '../shared/protocol.js'
+import type { ConnectionServiceLike, FetchRouteLike, HostContextLike, LoggerLike, TerminalToolSettings } from './types.js'
 
 /** 路由需要的状态读取面（由 `index.ts` 提供）。 */
 export interface RouteDeps {
   /** 当前设置值（host 解析后的）。 */
-  readonly readSettings: () => { dialect: 'pwsh' | 'bash'; bashPath: string }
+  readonly readSettings: () => TerminalToolSettings
   /** capability 视图。 */
-  readonly capability: () => { supported: boolean; reason?: string | undefined; shellSandboxMode?: string | undefined }
+  readonly capability: () => CapabilityView
   /** 宿主设置服务是否可见（设置表单可写）。 */
   readonly settingsAvailable: () => boolean
   /** 最近的替换报告。 */
-  readonly lastReplace: () => { applied: boolean; at: number; reason?: string | undefined } | undefined
+  readonly lastReplace: () => ReplaceReport | undefined
 }
 
 /** 结构化 JSON 响应。 */
@@ -64,13 +65,8 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
 }
 
 /** 候选的内部形状 → wire 视图。 */
-function toView(candidate: { path: string; source: string; valid: boolean; version?: string | undefined }): CandidateView {
-  return {
-    path: candidate.path,
-    source: candidate.source as CandidateView['source'],
-    valid: candidate.valid,
-    ...(candidate.version !== undefined ? { version: candidate.version } : {}),
-  }
+function toView(candidate: BashCandidate): CandidateView {
+  return { path: candidate.path, source: candidate.source, valid: candidate.valid }
 }
 
 /**
@@ -114,11 +110,7 @@ export function registerRoutes(ctx: HostContextLike, deps: RouteDeps): void {
         settingsAvailable: deps.settingsAvailable(),
         dialect: settings.dialect,
         bashPath: settings.bashPath,
-        capability: {
-          supported: capability.supported,
-          ...(capability.reason !== undefined ? { reason: capability.reason } : {}),
-          ...(capability.shellSandboxMode !== undefined ? { shellSandboxMode: capability.shellSandboxMode } : {}),
-        },
+        capability,
         ...(last !== undefined
           ? { lastReplace: { at: last.at, applied: last.applied, ...(last.reason !== undefined ? { reason: last.reason } : {}) } }
           : {}),
@@ -157,4 +149,3 @@ export function registerRoutes(ctx: HostContextLike, deps: RouteDeps): void {
   }
   attach(ctx)
 }
-

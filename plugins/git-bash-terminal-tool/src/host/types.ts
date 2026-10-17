@@ -2,12 +2,12 @@
  * 宿主侧 DSH 契约的**结构性窄化投影**。
  *
  * 本仓库规范（AGENTS.md §3.1）要求插件不引入对官方包的编译期/运行时依赖，
- * 因此这里只保留本插件真正读取的叶子字段。字段形状以官方 **DSH ≥ 0.2.0**（0.2.0-rc.2 与
- * 0.2.1-rc.1 的 d.ts + 运行时源码都核对过；自 0.4.1 起本插件最低支持 0.2.0）为准，
- * 可用 `node scripts/compatcheck.mjs --fetch <版本>` 复核：
+ * 因此这里只保留本插件真正读取的叶子字段。字段形状以官方 **DSH 0.2.0 – 0.2.1**
+ * 的 d.ts + 运行时源码为准（两个版本都核对过），可用
+ * `node scripts/compatcheck.mjs --fetch <版本>` 复核：
  *
  * - `agent/created` / `Agent.ctx`（事件名常量在 `host/replace.ts`）：`dsh-agent/lib/types/runtime-types.d.ts`
- *   ⚠️ 0.1.5-rc.1 的 `agent/session-start` 自 0.1.6 起已被官方移除（issue #1），不要再写回去
+ *   ⚠️ 旧事件名 `agent/session-start` 已从官方事件表移除（issue #1），不要再写回去
  * - `tools.register` / `tools.restrict`（`restrict` 实现见 `lib/index.js`）、
  *   `ToolExecution.rootCallId`、`output.presentationMeta`：`dsh-tools/lib/types/index.d.ts`
  * - `systemPrompt.section` / `getSectionOrder`：`dsh-system-prompt/lib/types/index.d.ts`
@@ -26,8 +26,7 @@
  * ⚠️ 契约变了集中改这里，不要散落到各文件。
  */
 
-import type { BashSource } from './discover.js'
-import type { CapabilityView, Dialect } from '../shared/protocol.js'
+import type { Dialect } from '../shared/protocol.js'
 
 /** cordis 宿主上下文的最小面。 */
 export interface HostContextLike {
@@ -51,15 +50,6 @@ export interface LoggerLike {
 // ---------------------------------------------------------------------------
 // agent / 事件
 // ---------------------------------------------------------------------------
-
-/** 会话启动原因（`SessionStartSource`；也是 `agent/created` 的 `source` 字段）。 */
-export type SessionStartSource = 'startup' | 'resume' | 'clear' | 'compact'
-
-/** per-agent 初始化事件的载荷（`agent/created`；只取本插件需要的字段）。 */
-export interface SessionStartPayload {
-  readonly agent: AgentLike
-  readonly source: SessionStartSource
-}
 
 /** 会话头（只读 `cwd`）。 */
 export interface SessionHeaderLike {
@@ -118,8 +108,8 @@ export interface ToolDefinitionLike {
     readonly schema: Record<string, unknown>
     readonly render: (args: unknown, value: unknown) => ContentBlockLike[]
     /**
-     * 可重放的表现层元数据（DSH 0.2.0 起对 native 与嵌套调用都会计算并持久化到
-     * `tool/result.meta`；0.2.0-rc.2 的 d.ts 与运行时已核对）。终端卡片从 `meta.cwd`
+     * 可重放的表现层元数据（DSH 0.2.x 起对 native 与嵌套调用都会计算并持久化到
+     * `tool/result.meta`，d.ts 与运行时已核对）。终端卡片从 `meta.cwd`
      * 读取「命令实际在哪个目录执行」，没有它就只能退回会话原始工作区。
      */
     readonly presentationMeta?: ((args: unknown, value: unknown) => unknown) | undefined
@@ -141,7 +131,7 @@ export interface ToolResultLike {
 export interface ToolRunContextLike {
   readonly callId: string
   /**
-   * 根调用 id（0.2.0-rc.2 起 `ToolExecution.rootCallId` 必有，0.2.1 继续保留）。
+   * 根调用 id（0.2.x 起 `ToolExecution.rootCallId` 必有）。
    *
    * PTC 的嵌套子调用有独立的 `callId`，但后台任务要归属到模型真正发起的那次根调用；
    * 更低版本没有该字段，退回 `callId`。
@@ -235,7 +225,7 @@ export interface SandboxProviderLike {
   /**
    * 用 runner 包住 caller 的 argv；无法强制时 fail closed（抛错）。
    *
-   * ⚠️ **async**（DSH 0.1.6 起；自 0.4.1 起本插件最低支持 0.2.0）：必须 await，否则拿到 Promise。
+   * ⚠️ **async**：必须 await，否则拿到 Promise。
    */
   confine(argv: readonly string[], policy: ConfinedSandboxPolicyLike): Promise<ConfinedArgvLike>
 }
@@ -343,10 +333,8 @@ export interface JobOutcomeLike {
 /**
  * `ctx.jobs` 的投影在**使用点**（`src/host/bash-tool.ts` 的 `BashJobsLike` / `BashJobSourceLike`）。
  *
- * ⚠️ 这里曾经有一份 `JobHooksLike` / `JobStartLike` 的旧投影，带着一个
- * `readOutput?(): string` 的钩子成员——那正是「后台任务读不到输出」的根源：注册表只认
- * `start({ output: [...] })` 的拉取源，**没有** `readOutput` 这种东西。留着它只会让人照抄，
- * 所以整块删掉了（`JobOutcomeLike` 仍然有用，留着）。
+ * ⚠️ 注册表只认 `start({ output: [...] })` 的拉取源，**没有** `readOutput` 这类钩子；
+ * 别把后台输出接在 hooks 上（表现是任务跑完但 `job_output` 永远为空）。
  */
 
 // ---------------------------------------------------------------------------
@@ -417,23 +405,10 @@ export interface TerminalToolSettings {
   readonly bashCandidates: readonly string[]
 }
 
-/** 一次 discovery 结果（host 内部使用）。 */
-export interface BashCandidateInternal {
-  readonly path: string
-  readonly source: BashSource
-  readonly valid: boolean
-  readonly version?: string | undefined
-}
-
 /** capability 探测的输入（可注入，便于自测）。 */
 export interface CapabilityProbeInput {
   readonly platform: string
   readonly hasTools: boolean
   readonly hasSystemPrompt: boolean
   readonly hasSettings: boolean
-  /** `ctx.shell.sandboxMode`；undefined 表示本部署不 confine（不 advertise 升级字段）。 */
-  readonly shellSandboxMode?: SandboxMode | undefined
 }
-
-/** capability 探测结果（与 wire 视图同形）。 */
-export type CapabilityProbeResult = CapabilityView

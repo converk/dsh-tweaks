@@ -6,7 +6,7 @@
  * `@deepseek-ai/dsh-tool-bash` 里的一小段胶水。这里把那两处**逐字**搬成纯逻辑，
  * 文案、顺序、fail-closed 语义全部对齐（模型可见的标记也是）。
  *
- * 官方原文（0.1.5-rc.1，`dsh-sandbox/lib/index.js`）：
+ * 官方原文（`dsh-sandbox` 的 escalation 纯函数，0.2.x 部署实测逐字未变）：
  * ```js
  * const WIDER_MODES = { 'read-only': ['workspace-write','danger-full-access'],
  *                       'workspace-write': ['danger-full-access'] }
@@ -134,14 +134,4 @@ export async function approveEscalation<A, C>(request: EscalationRequest, approv
     default:
       throw new Error(`sandbox escalation to "${mode}" produced an unrecognized approval outcome`)
   }
-}
-
-/**
- * 判断某模式是否落在该次调用的严格更宽集合内（用于自测与诊断）。
- * @param effectiveMode - 本次调用的生效模式。
- * @param mode - 目标模式。
- * @returns 是否严格更宽。
- */
-export function isStrictlyWider(effectiveMode: SandboxMode, mode: string): boolean {
-  return (WIDER_MODES[effectiveMode] ?? []).includes(mode as SandboxMode)
 }

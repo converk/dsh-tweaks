@@ -2,9 +2,10 @@
  * 光标所在行的文本提取（只依赖 DOM 结构投影，不直接引用浏览器 API，可在
  * Node 里用假 DOM 测试）。
  *
- * DSH composer 的可编辑根是 Lexical 渲染的 contenteditable：块元素（`<p>`）各是
- * 一行，软换行是 `<br>`；`setDraft` / 粘贴产生的多行文本里还可能直接含 `\n`。
- * 行首编号识别只关心「从行首到光标」的文本，所以这里对整棵子树做一次先序遍历：
+ * DSH composer 的可编辑根是 Lexical 渲染的 contenteditable：段落是 `<p>`，软换行是
+ * `<br>`，@ 引用 / 命令 chip 是内联 `<span>`；`setDraft` / 粘贴产生的多行文本里还可能
+ * 直接含 `\n`。行首编号识别只关心「从行首到光标」的文本，所以这里对整棵子树做一次
+ * 先序遍历：
  * - 块级容器（且不是可编辑根本身）→ 重置当前行
  * - `<br>` → 重置当前行
  * - 文本节点 → 追加（文本里出现 `\n` 时只保留最后一个换行之后的部分）
@@ -25,26 +26,15 @@ export interface DomNodeLike {
 const NODE_TYPE_ELEMENT = 1
 const NODE_TYPE_TEXT = 3
 
-/** 会被当作「新的一行」的块级标签（composer 文档目前实际只有 p / br）。 */
-const BLOCK_TAGS = new Set([
-  'p',
-  'div',
-  'li',
-  'pre',
-  'blockquote',
-  'ul',
-  'ol',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
-  'section',
-  'article',
-  'header',
-  'footer',
-])
+/**
+ * 会被当作「新的一行」的块级标签。
+ *
+ * 依据 0.2.1 运行时产物（`dsh-client-ui-conversation/lib/client.js`）：composer 的
+ * Lexical 文档只有段落（`<p>`）、软换行（`<br>`）与内联 chip（`<span>`），没有列表 /
+ * 标题等块节点（README「和 Codex 的列表格式有什么区别」同样说明没有列表节点）。
+ * `div` 留作块级结构变化时的兜底；可编辑根本身由 `node !== editable` 排除。
+ */
+const BLOCK_TAGS = new Set(['p', 'div'])
 
 /**
  * 返回可编辑根里「光标所在行、光标之前的文本」。
@@ -58,8 +48,8 @@ export function lineTextBeforeCaret(
   anchor: DomNodeLike,
   offset: number,
 ): string | null {
-  if (!containsNode(editable, anchor)) return null
   let line = ''
+  let found = false
 
   /** 追加一段文本；只保留这段文本里最后一个 `\n` 之后的部分。 */
   const append = (data: string, end?: number): void => {
@@ -71,6 +61,7 @@ export function lineTextBeforeCaret(
   /** 先序遍历；返回 true 表示已经到达光标节点、需要停止。 */
   const visit = (node: DomNodeLike): boolean => {
     if (node === anchor) {
+      found = true
       if (node.nodeType === NODE_TYPE_TEXT) {
         append(node.data ?? '', offset)
       } else if (node.nodeType === NODE_TYPE_ELEMENT) {
@@ -103,7 +94,7 @@ export function lineTextBeforeCaret(
   }
 
   visit(editable)
-  return line
+  return found ? line : null
 }
 
 /** 是否为块级元素（进入即开始新的一行）。 */
@@ -114,15 +105,4 @@ function isBlock(node: DomNodeLike): boolean {
 /** 是否为换行元素。 */
 function isLineBreak(node: DomNodeLike): boolean {
   return (node.tagName ?? '').toLowerCase() === 'br'
-}
-
-/** 目标节点是否在根子树内（含根本身）。 */
-function containsNode(root: DomNodeLike, target: DomNodeLike): boolean {
-  if (root === target) return true
-  const children = root.childNodes
-  for (let index = 0; index < children.length; index += 1) {
-    const child = children[index]
-    if (child !== undefined && containsNode(child, target)) return true
-  }
-  return false
 }

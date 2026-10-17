@@ -23,36 +23,29 @@ export const OVERLAY_ENTRY_ID = 'prompt-history'
  */
 export const inject = ['slots', 'locale']
 
-/** 把一个可能返回 disposer 的调用结果收成可调用 disposer。 */
-function asDisposer(value: unknown): () => void {
-  return typeof value === 'function' ? (value as () => void) : () => undefined
-}
-
 /**
  * 客户端插件体。
  * @param ctx - 客户端根上下文。
  */
 export function apply(ctx: PluginClientContextLike): void {
   const locale = ctx.get('locale') as LocaleLike | undefined
-  if (locale !== undefined && locale !== null) {
-    const register = (): (() => void) => {
+  if (locale !== undefined) {
+    // 字典随插件卸载撤销（ctx.effect 归当前 fiber）。同一页面重复 apply（HMR）时
+    // locale.register 会因命名空间已占用而抛错：保留既有字典即可。
+    ctx.effect(() => {
       const disposers: (() => void)[] = []
       try {
-        disposers.push(asDisposer(locale.register(LOCALE_NS, 'zh', zh)))
-        disposers.push(asDisposer(locale.register(LOCALE_NS, 'en', en)))
+        disposers.push(locale.register(LOCALE_NS, 'zh', zh), locale.register(LOCALE_NS, 'en', en))
       } catch {
-        // 同一页面重复 apply（HMR）时命名空间已被占用：保留既有字典即可。
+        // 命名空间已被占用：沿用既有字典。
       }
       return () => {
         for (const dispose of disposers) dispose()
       }
-    }
-    if (typeof ctx.effect === 'function') ctx.effect(register, 'prompt-history: dictionaries')
-    else register()
+    }, 'prompt-history: dictionaries')
   }
 
-  const bound = locale?.bind(LOCALE_NS)
-  const t: Translate = bound ?? ((key: string) => key)
+  const t: Translate = locale?.bind(LOCALE_NS) ?? ((key: string) => key)
 
   const slots = ctx.get('slots') as SlotsServiceLike | undefined
   if (slots === undefined) return

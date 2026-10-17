@@ -23,26 +23,18 @@ export const OVERLAY_ENTRY_ID = 'smart-list'
  */
 export const inject = ['slots']
 
-/** 把一个可能返回 disposer 的调用结果收成可调用 disposer。 */
-function asDisposer(value: unknown): () => void {
-  return typeof value === 'function' ? (value as () => void) : () => undefined
-}
-
 /**
  * 客户端插件体。
  * @param ctx - 客户端根上下文。
  */
 export function apply(ctx: PluginClientContextLike): void {
   const slots = ctx.get('slots') as SlotsServiceLike | undefined
-  if (slots === undefined || slots === null) return
-  const install = (): (() => void) =>
-    asDisposer(
-      slots.inject('conversation.input.overlay', () =>
-        slots.register({ name: 'conversation.input.overlay', id: OVERLAY_ENTRY_ID, order: 60 }, (props) =>
-          createElement(SmartListOverlay, { ...(props as OverlaySlotProps) }),
-        ),
-      ),
-    )
-  if (typeof ctx.effect === 'function') ctx.effect(install, 'smart-list: composer overlay')
-  else install()
+  if (slots === undefined) return
+  // slots.inject 返回的 disposer 挂在调用方 fiber 上（插件卸载时撤销注册控制器），
+  // 官方 ui-input-trigger 同样不额外包 ctx.effect。
+  slots.inject('conversation.input.overlay', () =>
+    slots.register({ name: 'conversation.input.overlay', id: OVERLAY_ENTRY_ID, order: 60 }, (props) =>
+      createElement(SmartListOverlay, { ...(props as OverlaySlotProps) }),
+    ),
+  )
 }

@@ -1,16 +1,15 @@
 /**
  * Git Bash 自动发现（纯逻辑 + 可注入的探测缝）。
  *
- * 需求 3（自动发现）与需求 4（找不到就不能选）都由这里支撑。算法按
- * `docs/plans/git-bash-terminal-tool-design.md` §5.2.5 落地：
+ * 需求 3（自动发现）与需求 4（找不到就不能选）都由这里支撑。算法要点：
  *
- * 1. **绝不使用 WSL 的 bash**（决策 A）。本机实测 `where bash` 的第一条就是
+ * 1. **绝不使用 WSL 的 bash**（决策 A）。Windows 上 `where bash` 的第一条常常就是
  *    `C:\Windows\System32\bash.exe`（WSL 的启动器），所以绝不把裸 `bash` 的
  *    PATH 解析当作兜底 —— 那样必然选到 WSL。
  * 2. **由 git 反推 bash**（决策 C）：接受 Git for Windows / MSYS2 / Cygwin
  *    任何形式的 git，从 `git.exe` 所在目录反推出同一安装里的 `bash.exe`。
- * 3. 注册表 `GitForWindows\InstallPath` 可能是**悬空残留**（本机就是：
- *    指向已不存在的 `D:\env\Git`），所以每个来源都要**逐路径校验存在性**。
+ * 3. 注册表 `GitForWindows\InstallPath` 可能是**悬空残留**（指向已卸载 / 移动的
+ *    安装目录），所以每个来源都要**逐路径校验存在性**。
  *
  * 本模块只做文件系统与注册表读取，不 import 任何 `@deepseek-ai/*`。
  * 所有外部探测都走 {@link DiscoveryProbes}，`scripts/selftest.mjs` 用它注入
@@ -31,27 +30,18 @@ export interface BashCandidate {
   readonly source: BashSource
   /** 是否通过存在性（文件或符号链接）校验。 */
   readonly valid: boolean
-  /** `<bash> -c 'bash --version'` 探测结果首行；探测失败/未探测时缺省。 */
-  readonly version?: string
 }
 
 /** 发现过程的外部探测缝（自测时注入假的实现）。 */
 export interface DiscoveryProbes {
   /** 文件（或符号链接）是否存在。 */
   fileExists(path: string): boolean
-  /**
-   * 目录是否存在（安装根探测用）。
-   *
-   * 老的自测探测缝可以省略：省略时退回 `fileExists`（兼容旧 fixture）。
-   * 生产实现必须区分文件与目录——把安装根当文件判断会让注册表/默认根扫描全部失效。
-   */
-  directoryExists?(path: string): boolean
+  /** 目录是否存在（安装根探测用；安装根是目录，不能按文件判断）。 */
+  directoryExists(path: string): boolean
   /** `where git` 的输出行；不可用时返回空数组。 */
   whereGit(): readonly string[]
   /** 读一条注册表值；没有则返回 undefined。 */
   readRegistry(hive: string, key: string, name: string): string | undefined
-  /** 执行 `<bash> -c 'bash --version'` 并返回首行；失败返回 undefined。 */
-  probeVersion(bashPath: string): string | undefined
   /** PATH 上的目录（`process.env.PATH` 拆分结果；测试可注入）。 */
   pathDirs(): readonly string[]
   /** 环境变量（`%ProgramFiles%` 等）。 */
@@ -284,20 +274,6 @@ export function defaultProbes(): DiscoveryProbes {
         return undefined
       }
     },
-    probeVersion: (bashPath) => {
-      try {
-        const result = spawnSync(bashPath, ['-c', 'bash --version'], {
-          encoding: 'utf8',
-          windowsHide: true,
-          timeout: 2000,
-        })
-        if (result.status !== 0 || typeof result.stdout !== 'string') return undefined
-        const first = result.stdout.split(/\r?\n/)[0]?.trim()
-        return first !== undefined && first.length > 0 ? first : undefined
-      } catch {
-        return undefined
-      }
-    },
     pathDirs: () => (process.env.PATH ?? '').split(delimiter).filter((entry) => entry.length > 0),
     env,
   }
@@ -329,14 +305,12 @@ export function discoverGitExecutables(probes: DiscoveryProbes): string[] {
  * 顺序：来源优先级（saved > git-for-windows > msys2 > cygwin > git-path），
  * 同源内按路径字典序，结果稳定可复现。命中 WSL 的路径**直接丢弃**。
  *
- * ⚠️ 默认**不**探测 `bash --version`：`probeVersion` 是同步 spawn，放在 Fetch
- * 路由里会阻塞宿主事件循环（每个候选最多数秒）。设置行只显示路径，version 是可选的诊断信息。
- * @param options - `saved`（用户已保存的 `bashPath`，排最前）、探测缝与是否探测版本。
+ * ⚠️ 发现过程**不**探测 `bash --version`：同步 spawn 放在 Fetch 路由里会阻塞宿主
+ * 事件循环（每个候选最多数秒）。设置行只显示路径，不需要版本信息。
+ * @param options - `saved`（用户已保存的 `bashPath`，排最前）与探测缝。
  * @returns 候选列表（可能为空 → 需求 4 的置灰条件）。
  */
-export function discoverBash(
-  options: { saved?: string | undefined; probes?: DiscoveryProbes; withVersion?: boolean } = {},
-): BashCandidate[] {
+export function discoverBash(options: { saved?: string | undefined; probes?: DiscoveryProbes } = {}): BashCandidate[] {
   const probes = options.probes ?? defaultProbes()
   const env = (name: string): string | undefined => probes.env(name)
   const collected: { path: string; source: BashSource }[] = []
@@ -350,7 +324,7 @@ export function discoverBash(
   // 1) 已保存的路径永远排最前（但绝不自动改写用户已有的选择）。
   if (options.saved !== undefined && options.saved.length > 0) push(options.saved, 'saved')
 
-  // 2) Git for Windows 注册表（目录不存在就丢弃 —— 本机就是悬空残留）。
+  // 2) Git for Windows 注册表（目录不存在就丢弃 —— 悬空残留很常见）。
   for (const entry of GIT_FOR_WINDOWS_KEYS) {
     const root = probes.readRegistry(entry.hive, entry.key, 'InstallPath')
     if (root === undefined || !existsAsDirectory(probes, root)) continue
@@ -388,16 +362,11 @@ export function discoverBash(
     if (previous === undefined || SOURCE_RANK[entry.source] < SOURCE_RANK[previous.source]) merged.set(key, entry)
   }
 
-  const candidates: BashCandidate[] = [...merged.values()].map((entry) => {
-    const valid = existsAsFile(probes, entry.path)
-    const version = options.withVersion === true && valid ? probes.probeVersion(entry.path) : undefined
-    return {
-      path: entry.path,
-      source: entry.source,
-      valid,
-      ...(version !== undefined ? { version } : {}),
-    }
-  })
+  const candidates: BashCandidate[] = [...merged.values()].map((entry) => ({
+    path: entry.path,
+    source: entry.source,
+    valid: existsAsFile(probes, entry.path),
+  }))
 
   return candidates.sort((a, b) => {
     const byRank = SOURCE_RANK[a.source] - SOURCE_RANK[b.source]
@@ -430,8 +399,6 @@ export function validateBashPath(path: string, probes: DiscoveryProbes = default
   return null
 }
 
-
-
 /**
  * 统一口径的存在性判断：先把候选路径规范化再问探测缝。
  *
@@ -448,34 +415,27 @@ function existsAsFile(probes: DiscoveryProbes, path: string): boolean {
 
 /**
  * 安装根是否为目录。
- *
- * 探测缝没有 `directoryExists` 时退回 `fileExists`，只为兼容旧的自测 fixture；
- * 生产探测实现必须给出真正的目录判断（否则注册表/默认根扫描会被目录判成文件而跳过）。
  * @param probes - 探测缝。
  * @param path - 待判断的安装根。
  * @returns 是否为目录。
  */
 function existsAsDirectory(probes: DiscoveryProbes, path: string): boolean {
-  const check = probes.directoryExists
-  return typeof check === 'function' ? check(resolve(path)) : probes.fileExists(resolve(path))
+  return probes.directoryExists(resolve(path))
 }
 
 /**
- * 从一个确定的安装根里收集**真实存在**的 bash 候选；一个都没有时退回「首选布局」的
- * 期望路径（标为不存在），让 UI 仍能显示「这里本来该有什么」。
+ * 从一个确定的安装根里收集**真实存在**的 bash 候选。
  * @param root - 已确认存在的安装根。
  * @param source - 来源分类。
  * @param probes - 探测缝。
- * @returns 候选列表（至少一项）。
+ * @returns 候选列表（可能为空）。
  */
 function existingBashOfRoot(
   root: string,
   source: BashSource,
   probes: DiscoveryProbes,
 ): { path: string; source: BashSource }[] {
-  const all = deriveBashFromGitRoot(root)
-  const found = all.filter((candidate) => existsAsFile(probes, candidate))
-  if (found.length > 0) return found.map((candidate) => ({ path: candidate, source }))
-  const fallback = bashCandidatesForRoot(root)[0]
-  return fallback === undefined ? [] : [{ path: fallback, source }]
+  return deriveBashFromGitRoot(root)
+    .filter((candidate) => existsAsFile(probes, candidate))
+    .map((candidate) => ({ path: candidate, source }))
 }

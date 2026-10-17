@@ -35,7 +35,6 @@ export interface CandidateView {
   readonly path: string
   readonly source: 'saved' | 'git-for-windows' | 'msys2' | 'cygwin' | 'git-path'
   readonly valid: boolean
-  readonly version?: string
 }
 
 /** 宿主半区对一次会话替换尝试的结果（用于设置行的「当前版本不支持」提示）。 */
@@ -75,8 +74,6 @@ export interface CapabilityView {
   readonly supported: boolean
   /** 不支持时的原因（面向用户的一句话）。 */
   readonly reason?: string
-  /** `ctx.shell.sandboxMode`（advertise 沙箱升级字段的信号；undefined = 不 advertise）。 */
-  readonly shellSandboxMode?: string
 }
 
 /** `/discover` 的返回值。 */

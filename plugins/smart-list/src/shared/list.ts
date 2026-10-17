@@ -33,17 +33,13 @@ const UNORDERED_LINE = /^([ \t\u3000]*)([-*+•])([ \t\u3000]+)(\S[\s\S]*)$/u
 export function nextListMarker(lineBeforeCaret: string): string | null {
   const ordered = ORDERED_LINE_ASCII.exec(lineBeforeCaret) ?? ORDERED_LINE_CJK.exec(lineBeforeCaret)
   if (ordered !== null) {
-    const indent = ordered[1] ?? ''
-    const digits = ordered[2] ?? ''
-    const separator = ordered[3] ?? ''
-    const gap = ordered[4] ?? ''
+    // 正则没有可选分组：匹配成功时 1–4 组都有值（默认值只用于收窄 TS 的 undefined）。
+    const [, indent = '', digits = '', separator = '', gap = ''] = ordered
     return indent + nextNumber(digits) + separator + gap
   }
   const unordered = UNORDERED_LINE.exec(lineBeforeCaret)
   if (unordered !== null) {
-    const indent = unordered[1] ?? ''
-    const bullet = unordered[2] ?? ''
-    const gap = unordered[3] ?? ''
+    const [, indent = '', bullet = '', gap = ''] = unordered
     return indent + bullet + gap
   }
   return null
@@ -56,5 +52,5 @@ export function nextListMarker(lineBeforeCaret: string): string | null {
  */
 function nextNumber(digits: string): string {
   const next = String(Number(digits) + 1)
-  return digits.length > 1 && digits.startsWith('0') ? next.padStart(digits.length, '0') : next
+  return digits.startsWith('0') ? next.padStart(digits.length, '0') : next
 }

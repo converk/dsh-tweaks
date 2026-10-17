@@ -47,9 +47,7 @@ const pillStyle: CSSProperties = {
 
 /** overlay 列表项：常态渲染空锚点，浏览中渲染位置角标。 */
 export function PromptHistoryOverlay(props: OverlaySlotProps): ReactElement | null {
-  const { useChat, useInput, inputActions, sessionId, t: translate } = props
-  /** locale 未就绪时的兜底（正常路径下用不到，key 不会被渲染出来）。 */
-  const t = translate ?? ((key: string): string => key)
+  const { useChat, useInput, inputActions, sessionId, t } = props
 
   // 数据源：会话已定稿节点（选择器返回数组本身，引用稳定时不再重渲染）。
   const nodes = useChat?.((snapshot: ChatSnapshotLike) => snapshot.legacy.nodes)
@@ -85,13 +83,11 @@ export function PromptHistoryOverlay(props: OverlaySlotProps): ReactElement | nu
       return
     }
     exitBrowse()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft])
 
   // 提交开始（任一非 plain 相位）即退出浏览。
   useEffect(() => {
     if (phase !== 'plain') exitBrowse()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
   useEffect(() => {
@@ -120,39 +116,35 @@ export function PromptHistoryOverlay(props: OverlaySlotProps): ReactElement | nu
         state.selfWrite = true
         inputActions.setDraft(text)
       }
+      /** 把游标移到 index 并回填该条历史（下标越界时只移动游标）。 */
+      const move = (index: number): void => {
+        state.index = index
+        const entry = history[index]
+        if (entry !== undefined) write(entry)
+      }
 
       if (event.key === 'ArrowUp') {
         if (state.index === null) {
           // 只在草稿为空时接管，避免与斜杠/引用菜单及编辑冲突。
           if (currentDraft.trim() !== '' || history.length === 0) return
-          state.index = history.length - 1
           state.backup = currentDraft
-          const entry = history[state.index]
-          if (entry !== undefined) write(entry)
+          move(history.length - 1)
         } else if (state.index > 0) {
-          state.index -= 1
-          const entry = history[state.index]
-          if (entry !== undefined) write(entry)
+          move(state.index - 1)
         }
-        event.preventDefault()
-        event.stopPropagation()
-        bump()
-        return
+      } else {
+        // ArrowDown：仅在浏览中接管。
+        if (state.index === null) return
+        if (state.index < history.length - 1) {
+          move(state.index + 1)
+        } else {
+          // 越过最新一条：恢复进入浏览前的草稿。
+          write(state.backup)
+          state.index = null
+          state.backup = ''
+        }
       }
 
-      // ArrowDown：仅在浏览中接管。
-      if (state.index === null) return
-      const lastIndex = history.length - 1
-      if (state.index < lastIndex) {
-        state.index += 1
-        const entry = history[state.index]
-        if (entry !== undefined) write(entry)
-      } else {
-        // 越过最新一条：恢复进入浏览前的草稿。
-        write(state.backup)
-        state.index = null
-        state.backup = ''
-      }
       event.preventDefault()
       event.stopPropagation()
       bump()

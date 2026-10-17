@@ -26,7 +26,6 @@ import { createBashTool, type BashToolRuntime } from './bash-tool.js'
 import { diag } from './diag.js'
 import { validateSettings } from './settings.js'
 import type {
-  AgentContextLike,
   AgentLike,
   HostContextLike,
   SystemPromptLike,
@@ -50,16 +49,9 @@ export const TOOL_BASH_SECTION_TEXT =
 /**
  * per-agent 初始化事件名 —— 本插件的**唯一挂载点**。
  *
- * ⚠️ 这条常量是被 issue #1 逼出来的：DSH 0.1.5-rc.1 之后 **`agent/session-start`
- * 已被官方移除**（0.1.6-alpha.1 起消失，0.1.7 / 0.2.0 各版本都没有），取而代之的是
- * `agent/created`。两者载荷同形（`{ agent, source, signal }`），但事件名写错
- * cordis **不报错、只是永远不触发** —— 表现就是「设置切了 bash，模型仍只看到 pwsh，
- * 日志里连一条 `replace:` 都没有」（issue #1 就是这个）。
- *
- * 语义核对（`dsh-agent` 的 `runtime-types.d.ts`）：`agent/created` 是
- * `@mode serial`，且在 creation resolve 之前被 **await**；官方文档明确要求
- * 「在这个监听器里完成工具与提示词的安装再返回」，正是本插件需要的时机。
- * 该事件在 0.1.5-rc.1、0.1.6、0.1.7-rc.2、0.2.0-rc.1/rc.2 上均存在（0.1.5 两者并存）。
+ * ⚠️ 旧事件名 `agent/session-start` 已被官方移除（issue #1），取而代之的是
+ * `agent/created`。事件名写错 cordis **不报错、只是永远不触发** —— 表现就是
+ * 「设置切了 bash，模型仍只看到 pwsh，日志里连一条 `replace:` 都没有」。
  */
 export const AGENT_INIT_EVENT = 'agent/created'
 
@@ -69,33 +61,6 @@ export interface ReplaceAttempt {
   readonly applied: boolean
   /** 未替换的原因（成功时为 undefined）。 */
   readonly reason?: string
-}
-
-/** 能力探测：`agent.ctx` 上是否具备替换所需的三个方法。 */
-export interface ReplaceCapability {
-  readonly tools: ToolRuntimeLike | undefined
-  readonly systemPrompt: SystemPromptLike | undefined
-  readonly toolsLike: boolean
-  readonly registerLike: boolean
-  readonly restrictLike: boolean
-  readonly promptLike: boolean
-}
-
-/** 以最小假设做特性探测（不信任任何 import 来的类型）。 */
-export function probeCapability(agentCtx: AgentContextLike): ReplaceCapability {
-  const tools = readService<ToolRuntimeLike>(agentCtx, 'tools')
-  const systemPrompt = readService<SystemPromptLike>(agentCtx, 'systemPrompt')
-  const registerLike = typeof tools?.register === 'function'
-  const restrictLike = typeof tools?.restrict === 'function'
-  const promptLike = typeof systemPrompt?.section === 'function'
-  return {
-    tools: registerLike && restrictLike ? tools : undefined,
-    systemPrompt: promptLike ? systemPrompt : undefined,
-    toolsLike: tools !== undefined,
-    registerLike,
-    restrictLike,
-    promptLike,
-  }
 }
 
 /** 安全地读一个可选服务（`get` 可能不存在或抛错）。 */
@@ -111,7 +76,6 @@ function readService<T>(ctx: { get?(name: string): unknown }, name: string): T |
 /**
  * 读官方集中分配的提示词 section 顺序。
  *
- * `systemPrompt.getSectionOrder` 自 0.1.7 起存在；读不到（或抛错）时退回常量，
  * 保证老部署与异常组合里仍能注册。
  * @param systemPrompt - 提示词服务。
  * @param name - 顺序名（`TOOL_BASH` / `TOOL_PWSH`）。
@@ -145,7 +109,7 @@ export function replaceTerminalTool(
   if (settings.dialect !== 'bash') return { applied: false, reason: 'dialect is pwsh' }
   if (settings.bashPath.length === 0) return { applied: false, reason: 'bashPath is empty' }
 
-  // 0.1.7 的 Config schema 表达不了「路径存在且非 WSL」，校验放在使用点：
+  // Config schema 表达不了「路径存在且非 WSL」，校验放在使用点：
   // 不合法就跳过替换（会话照旧 pwsh），绝不注册一个指向坏路径的工具。
   try {
     validateSettings(settings)
@@ -156,20 +120,17 @@ export function replaceTerminalTool(
   const agentCtx = agent.ctx
   if (agentCtx === undefined || agentCtx === null) return { applied: false, reason: 'agent has no scoped ctx' }
 
-  const capability = probeCapability(agentCtx)
-  if (!capability.toolsLike) return { applied: false, reason: 'ctx.tools is not visible in the agent scope' }
-  if (!capability.registerLike || !capability.restrictLike) {
+  const tools = readService<ToolRuntimeLike>(agentCtx, 'tools')
+  if (tools === undefined) return { applied: false, reason: 'ctx.tools is not visible in the agent scope' }
+  if (typeof tools.register !== 'function' || typeof tools.restrict !== 'function') {
     return { applied: false, reason: 'this DSH version has no tools.register/tools.restrict' }
   }
-  if (!capability.promptLike) return { applied: false, reason: 'this DSH version has no systemPrompt.section' }
+  const systemPrompt = readService<SystemPromptLike>(agentCtx, 'systemPrompt')
+  if (systemPrompt === undefined || typeof systemPrompt.section !== 'function') {
+    return { applied: false, reason: 'this DSH version has no systemPrompt.section' }
+  }
   if (!readService<{ spawn?: unknown }>(host, 'subprocess')?.spawn) {
     return { applied: false, reason: 'ctx.subprocess is not visible' }
-  }
-
-  const tools = capability.tools
-  const systemPrompt = capability.systemPrompt
-  if (tools === undefined || systemPrompt === undefined) {
-    return { applied: false, reason: 'capability probe returned no usable services' }
   }
 
   // 第 3 条判定：`restrict` 的成功/抛错就是最准确、最省事的「该 agent 现在能看见 pwsh 吗」。

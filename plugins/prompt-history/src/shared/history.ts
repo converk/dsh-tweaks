@@ -9,12 +9,6 @@
 /** 保留的最多历史条数（超出丢弃最早的）。 */
 export const HISTORY_LIMIT = 200
 
-/** 历史提取只读取的节点形状（结构性窄化）。 */
-interface PromptMessageLike {
-  readonly kind?: unknown
-  readonly content?: unknown
-}
-
 /**
  * 从会话节点里提取提示词历史（时间正序）。
  *
@@ -28,7 +22,7 @@ export function extractHistory(nodes: readonly unknown[]): string[] {
   const out: string[] = []
   for (const node of nodes) {
     if (typeof node !== 'object' || node === null) continue
-    const message = node as PromptMessageLike
+    const message = node as { kind?: unknown; content?: unknown }
     if (message.kind !== 'user' && message.kind !== 'steering') continue
     if (!Array.isArray(message.content)) continue
     const parts: string[] = []
@@ -41,9 +35,7 @@ export function extractHistory(nodes: readonly unknown[]): string[] {
       parts.push(candidate.text)
     }
     const text = parts.join('\n').trim()
-    if (text === '') continue
-    const previous = out.length > 0 ? out[out.length - 1] : undefined
-    if (text === previous) continue
+    if (text === '' || text === out[out.length - 1]) continue
     out.push(text)
   }
   return out.length > HISTORY_LIMIT ? out.slice(-HISTORY_LIMIT) : out

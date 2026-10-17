@@ -57,6 +57,9 @@ function pluginFile(relative) {
   return readFileSync(new URL('../' + relative, import.meta.url), 'utf8')
 }
 
+// 文案字典用运行时真件核对（键集与值都比对字符串解析可靠）。
+const { LOCALE_NS, zh, en } = await loadSourceModule('src/client/locales.ts')
+
 // ---------------------------------------------------------------------------
 // client bundle 协议（不需要 DSH 部署：读本仓库构建产物）
 // ---------------------------------------------------------------------------
@@ -125,38 +128,24 @@ test('插件源码契约面：键盘拦截配方与 DOM 判据', () => {
 
 test('插件源码契约面：提取逻辑在 shared/history.ts，overlay 只消费', () => {
   const overlay = pluginFile('src/client/overlay.tsx')
-  const history = pluginFile('src/shared/history.ts')
   assert.ok(
     overlay.includes("import { extractHistory } from '../shared/history.js'"),
     'overlay 必须从 shared/history.ts 导入提取逻辑（单一来源）',
   )
   assert.ok(overlay.includes('extractHistory(nodes)'), 'overlay 必须实际调用 extractHistory')
   assert.ok(!overlay.includes('function extractHistory'), '提取逻辑不能内联回 overlay（会与纯逻辑自测脱节）')
-  assert.ok(history.includes("message.kind !== 'user' && message.kind !== 'steering'"), '只取 user / steering 节点')
-  assert.ok(history.includes('export const HISTORY_LIMIT = 200'), '历史上限 200 条')
 })
 
 test('插件源码契约面：locale 命名空间与中英文案键集一致', () => {
-  const locales = pluginFile('src/client/locales.ts')
-  assert.ok(locales.includes("export const LOCALE_NS = 'prompt-history'"))
-  const zhStart = locales.indexOf('export const zh')
-  const enStart = locales.indexOf('export const en')
-  assert.ok(zhStart >= 0 && enStart > zhStart, 'locales.ts 里应有 zh / en 两份字典')
-  const keysOf = (segment) =>
-    segment
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.endsWith(',') && line.includes(': '))
-      .map((line) => line.slice(0, line.indexOf(':')))
-      .sort()
-  const zhKeys = keysOf(locales.slice(zhStart, enStart))
-  const enKeys = keysOf(locales.slice(enStart))
-  assert.deepEqual(zhKeys, ['browseTitle', 'position'])
-  assert.deepEqual(enKeys, zhKeys, 'en 键集必须与 zh 一致')
-  assert.ok(locales.includes("position: '历史 {n}/{total}'"))
-  assert.ok(locales.includes("position: 'History {n}/{total}'"))
-  assert.ok(locales.includes("browseTitle: '历史提示词（↑ / ↓ 切换）'"))
-  assert.ok(locales.includes("browseTitle: 'Prompt history (↑ / ↓ to browse)'"))
+  assert.equal(LOCALE_NS, 'prompt-history', 'locale 命名空间')
+  assert.deepEqual(zh, {
+    position: '历史 {n}/{total}',
+    browseTitle: '历史提示词（↑ / ↓ 切换）',
+  })
+  assert.deepEqual(en, {
+    position: 'History {n}/{total}',
+    browseTitle: 'Prompt history (↑ / ↓ to browse)',
+  }, 'en 文案与键集必须与 zh 一一对应')
 })
 
 test('包声明与 bundle patch：双面插件 + selftest 脚本', () => {
@@ -183,11 +172,11 @@ test('包声明与 bundle patch：双面插件 + selftest 脚本', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * 把 src/shared/history.ts 现场 bundle 成 ESM data URL 再 import：
+ * 把 src/ 下的一个纯逻辑模块现场 bundle 成 ESM data URL 再 import：
  * 不必为测试单独产出构建文件，也不会把 React / DOM 带进来。
  */
-async function loadHistoryModule() {
-  const entry = fileURLToPath(new URL('../src/shared/history.ts', import.meta.url))
+async function loadSourceModule(relative) {
+  const entry = fileURLToPath(new URL('../' + relative, import.meta.url))
   const built = await build({
     entryPoints: [entry],
     bundle: true,
@@ -198,11 +187,11 @@ async function loadHistoryModule() {
     logLevel: 'silent',
   })
   const code = built.outputFiles[0]?.text
-  assert.ok(code !== undefined, 'esbuild 没有产出历史提取模块')
+  assert.ok(code !== undefined, 'esbuild 没有产出 ' + relative)
   return await import('data:text/javascript;base64,' + Buffer.from(code, 'utf8').toString('base64'))
 }
 
-const { extractHistory, HISTORY_LIMIT } = await loadHistoryModule()
+const { extractHistory, HISTORY_LIMIT } = await loadSourceModule('src/shared/history.ts')
 
 test('纯逻辑：只取 user / steering 节点，时间正序', () => {
   const nodes = [
@@ -385,7 +374,9 @@ test('客户端入口 apply：缺 locale / slots 时不抛（静默降级）', (
     register: () => () => undefined,
     bind: () => (key) => key,
   }
-  assert.doesNotThrow(() => client.apply({ get: (name) => (name === 'locale' ? localeOnly : undefined) }))
+  assert.doesNotThrow(() =>
+    client.apply({ get: (name) => (name === 'locale' ? localeOnly : undefined), effect: () => undefined }),
+  )
   const slotsCalls = []
   const slotsOnly = {
     inject(key) {
@@ -570,7 +561,7 @@ function officialRootOf(entry) {
 function resolveOfficialRoots() {
   const delimiter = process.platform === 'win32' ? ';' : ':'
   const roots = []
-  for (const key of ['DSH_CONTRACT_HOMES', 'DSH_CONTRACT_HOME', 'DSH_STABLE_HOME', 'DSH_017_HOME']) {
+  for (const key of ['DSH_CONTRACT_HOMES', 'DSH_CONTRACT_HOME', 'DSH_STABLE_HOME']) {
     const value = process.env[key]
     if (value === undefined || value.length === 0) continue
     for (const entry of value.split(delimiter)) {
@@ -585,7 +576,7 @@ function resolveOfficialRoots() {
 const officialRoots = resolveOfficialRoots()
 if (officialRoots.length === 0) {
   console.log(
-    '  info 未提供 DSH_CONTRACT_HOMES / DSH_CONTRACT_HOME / DSH_STABLE_HOME / DSH_017_HOME：' +
+    '  info 未提供 DSH_CONTRACT_HOMES / DSH_CONTRACT_HOME / DSH_STABLE_HOME：' +
       '跳过官方产物契约核对（无部署的 CI 只跑插件侧断言）',
   )
 } else {

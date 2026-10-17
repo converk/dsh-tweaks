@@ -3,10 +3,9 @@
  *
  * 与 host/types.ts 同样的纪律（AGENTS.md §3.1）：client bundle 只允许 `require`
  * 页面种子模块（`react` / `react/jsx-runtime`），所以这里不 import 任何
- * `@deepseek-ai/*` 类型包，只按真实契约的形状窄化。字段形状以本机 DSH
- * 0.2.0-rc.2 / 0.2.1-rc.1 部署的 `lib/types/client/**` 为准（自 0.4.1 起最低支持 0.2.0；
- * 0.1.7-rc.2 也核对过，但不再支持）。0.2.1 的漂移：官方设置快照删除了 `mode`，
- * 见 `SettingsScopeSnapshotLike.mode`：
+ * `@deepseek-ai/*` 类型包，只按真实契约的形状窄化。字段形状以官方 DSH
+ * 0.2.0 – 0.2.1 部署的 `lib/types/client/**` 为准（两个版本都核对过）。
+ * 0.2.1 的漂移：官方设置快照删除了 `mode`，见 `SettingsScopeSnapshotLike.mode`：
  *
  * - `slots.inject/register`：`dsh-client-ui-slots/lib/types/client/index.d.ts`
  * - `settings.general.item` 的 owner props 为空：`dsh-client-ui-settings/lib/types/client/contract/slots.d.ts`
@@ -22,8 +21,7 @@ export type Translate = (key: string, params?: Record<string, string>) => string
 
 /** `locale` 服务的最小面。 */
 export interface LocaleLike {
-  register(namespace: string, language: string, dictionary: Record<string, string>): unknown
-  register(namespace: string, dictionaries: Record<string, Record<string, string>>): unknown
+  register(namespace: string, language: string, dictionary: Record<string, string>): () => void
   bind(namespace: string): Translate
 }
 
@@ -50,9 +48,6 @@ export interface SlotsServiceLike {
 export interface SettingsScopeSnapshotLike<T> {
   readonly status: 'loading' | 'ready' | 'unavailable'
   readonly value: T | undefined
-  readonly base: unknown
-  readonly user: unknown
-  readonly revision: number | undefined
   readonly writable: boolean
   /**
    * 0.2.0 及更早：`host`（同步宿主文档）/ `memory`（remote 进程内）。
@@ -75,11 +70,9 @@ export interface SettingsScopeLike<T> {
    * `undefined`。所以类型是 `unknown`，调用方显式判 `false`（见 `store.ts`）。
    */
   mutate(
-    ops: readonly { op: 'set' | 'unset'; path: readonly string[]; value?: unknown }[],
+    ops: readonly { op: 'set'; path: readonly string[]; value: unknown }[],
     expectedRevision?: number,
   ): Promise<unknown>
-  set(field: string, value: unknown): Promise<unknown>
-  unset(field: string): Promise<unknown>
 }
 
 /**
@@ -118,10 +111,11 @@ export interface SettingsScopeBinderLike {
   bind<T>(spec: SettingsScopeSpecLike<T>): SettingsScopeLike<T>
 }
 
-/** cordis 客户端上下文的最小面（本插件只用到 `get` / `effect` / `inject`）。 */
+/** cordis 客户端上下文的最小面（本插件只用到 `get` / `effect` / `inject`，三者都是 cordis Context 的成员）。 */
 export interface PluginClientContextLike {
   get(name: string): unknown
-  effect?(callback: () => (() => void) | void, label?: string): unknown
+  /** 注册随当前 fiber 回收的副作用（locale 字典的 disposer）。 */
+  effect(callback: () => (() => void) | void, label?: string): unknown
   /** 注册一个等服务就位后再跑的子插件（`ctx.plugin({ inject, apply })` 的简写）。 */
-  inject?(services: readonly string[], callback: () => void): unknown
+  inject(services: readonly string[], callback: () => void): unknown
 }

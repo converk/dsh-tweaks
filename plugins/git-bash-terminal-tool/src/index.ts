@@ -18,7 +18,7 @@ import { registerReplacement } from './host/replace.js'
 import { registerRoutes } from './host/routes.js'
 import { diag } from './host/diag.js'
 import type { CapabilityProbeInput, HostContextLike, TerminalToolSettings } from './host/types.js'
-import type { ReplaceReport } from './shared/protocol.js'
+import type { CapabilityView, ReplaceReport } from './shared/protocol.js'
 
 /** 本插件没有硬依赖：所有服务都用 `ctx.get` 读，缺失时降级。 */
 export const inject: string[] = []
@@ -39,7 +39,6 @@ export {
   renderPromoted,
   renderJobRead,
   ringDelta,
-  sandboxNotes,
   processOutcome,
   parseExitStatus,
   parseBashArgs,
@@ -47,14 +46,10 @@ export {
   composeEnv,
   canonicalPath,
   resolveWorkdir,
-  ENV_OVERRIDES,
-  WINDOWS_ENV_DEFAULTS,
   bashPathEntries,
   bashInstallRoot,
   pathKey,
   bashOutputSchema,
-  bashParameters,
-  bashDescription,
 } from './host/bash-tool.js'
 export {
   ESCALATION_TARGETS,
@@ -64,7 +59,7 @@ export {
   sandboxDenialMarker,
   escalationHintMarker,
 } from './host/escalation.js'
-export { AGENT_INIT_EVENT, probeCapability, replaceTerminalTool } from './host/replace.js'
+export { AGENT_INIT_EVENT, replaceTerminalTool } from './host/replace.js'
 export { diagFile } from './host/diag.js'
 
 /**
@@ -75,22 +70,14 @@ export { diagFile } from './host/diag.js'
  * @param input - 探测输入。
  * @returns capability 视图。
  */
-export function probeDeploymentCapability(input: CapabilityProbeInput): {
-  supported: boolean
-  reason?: string | undefined
-  shellSandboxMode?: string | undefined
-} {
-  const shellSandboxMode = input.shellSandboxMode
-  const base = shellSandboxMode !== undefined ? { shellSandboxMode: String(shellSandboxMode) } : {}
-  if (input.platform !== 'win32') {
-    return { supported: false, reason: '仅 Windows 支持切换终端工具', ...base }
-  }
-  if (!input.hasTools) return { supported: false, reason: '当前 DSH 版本不提供 ctx.tools（无法隐藏 pwsh）', ...base }
+export function probeDeploymentCapability(input: CapabilityProbeInput): CapabilityView {
+  if (input.platform !== 'win32') return { supported: false, reason: '仅 Windows 支持切换终端工具' }
+  if (!input.hasTools) return { supported: false, reason: '当前 DSH 版本不提供 ctx.tools（无法隐藏 pwsh）' }
   if (!input.hasSystemPrompt) {
-    return { supported: false, reason: '当前 DSH 版本不提供 ctx.systemPrompt（无法压掉 pwsh 提示词）', ...base }
+    return { supported: false, reason: '当前 DSH 版本不提供 ctx.systemPrompt（无法压掉 pwsh 提示词）' }
   }
-  if (!input.hasSettings) return { supported: false, reason: '当前 DSH 版本不提供 ctx.settings（无法保存选择）', ...base }
-  return { supported: true, ...base }
+  if (!input.hasSettings) return { supported: false, reason: '当前 DSH 版本不提供 ctx.settings（无法保存选择）' }
+  return { supported: true }
 }
 
 /**
@@ -99,14 +86,8 @@ export function probeDeploymentCapability(input: CapabilityProbeInput): {
  * @param config - Loader 解析后的 entry Config（volatile 字段是稳定引用）；无 Loader 时缺省。
  */
 export function apply(ctx: HostContextLike, config?: unknown): void {
-  const state: {
-    lastReplace?: ReplaceReport | undefined
-    applied: boolean
-    agents: number
-  } = {
-    applied: false,
-    agents: 0,
-  }
+  /** 最近一次替换尝试（设置行状态用）。 */
+  let lastReplace: ReplaceReport | undefined
 
   diag(`apply: platform=${process.platform} pid=${String(process.pid)}`)
 
@@ -130,17 +111,16 @@ export function apply(ctx: HostContextLike, config?: unknown): void {
 
   // 1) 两条 `/api` 路由。
   registerRoutes(ctx, {
-    readSettings: () => settingsForSession(),
+    readSettings: settingsForSession,
     capability: () =>
       probeDeploymentCapability({
         platform: process.platform,
         hasTools: hasService(ctx, 'tools'),
         hasSystemPrompt: hasService(ctx, 'systemPrompt'),
         hasSettings: hasService(ctx, 'settings'),
-        shellSandboxMode: readShellSandboxMode(ctx),
       }),
     settingsAvailable: () => hasService(ctx, 'settings'),
-    lastReplace: () => state.lastReplace,
+    lastReplace: () => lastReplace,
   })
 
   // 2) per-agent 替换（核心机制）。
@@ -148,28 +128,14 @@ export function apply(ctx: HostContextLike, config?: unknown): void {
     host: ctx,
     settings: settingsForSession,
     onAttempt: (attempt, agent) => {
-      state.agents += 1
-      state.lastReplace = {
+      lastReplace = {
         at: Date.now(),
         applied: attempt.applied,
         ...(attempt.reason !== undefined ? { reason: attempt.reason } : {}),
       }
-      if (attempt.applied) state.applied = true
-      else diag(`replace: skipped agent=${agent.id} reason=${attempt.reason ?? 'unknown'}`)
+      if (!attempt.applied) diag(`replace: skipped agent=${agent.id} reason=${attempt.reason ?? 'unknown'}`)
     },
   })
-}
-
-/** 读 `ctx.shell.sandboxMode`（只看，不接管）。 */
-function readShellSandboxMode(ctx: HostContextLike): CapabilityProbeInput['shellSandboxMode'] {
-  try {
-    const shell = ctx.get('shell') as { sandboxMode?: unknown } | undefined
-    const mode = shell?.sandboxMode
-    if (mode === 'read-only' || mode === 'workspace-write' || mode === 'danger-full-access') return mode
-    return undefined
-  } catch {
-    return undefined
-  }
 }
 
 /** 某个服务是否可见（能力探测用）。 */

@@ -66,39 +66,33 @@ export function decodeSettings(section: unknown): TerminalToolSettingsValue | un
   return { dialect, bashPath, bashCandidates }
 }
 
-/** 把一个可能返回 disposer 的调用结果收成可调用 disposer。 */
-function asDisposer(value: unknown): () => void {
-  return typeof value === 'function' ? (value as () => void) : () => undefined
-}
-
 /**
  * 客户端插件体。
  * @param ctx - 客户端根上下文。
  */
 export function apply(ctx: PluginClientContextLike): void {
   const locale = ctx.get('locale') as LocaleLike | undefined
-  if (locale !== undefined && locale !== null) {
-    const register = (): (() => void) => {
+  if (locale !== undefined) {
+    // 字典随插件卸载撤销（ctx.effect 归当前 fiber）。同一页面重复 apply（HMR）时
+    // locale.register 会因命名空间已占用而抛错（服务语义：重复注册抛错）：保留既有字典即可。
+    ctx.effect(() => {
       const disposers: (() => void)[] = []
       try {
-        disposers.push(asDisposer(locale.register(LOCALE_NS, 'zh', zh)))
-        disposers.push(asDisposer(locale.register(LOCALE_NS, 'en', en)))
+        disposers.push(locale.register(LOCALE_NS, 'zh', zh), locale.register(LOCALE_NS, 'en', en))
       } catch {
-        // 同一页面重复 apply（HMR）时命名空间已被占用：保留既有字典即可。
+        // 命名空间已被占用：沿用既有字典。
       }
       return () => {
         for (const dispose of disposers) dispose()
       }
-    }
-    if (typeof ctx.effect === 'function') ctx.effect(register, 'git-bash-terminal-tool: dictionaries')
-    else register()
+    }, 'git-bash-terminal-tool: dictionaries')
   }
 
   const bound = locale?.bind(LOCALE_NS)
   const t: Translate = bound ?? ((key: string) => key)
 
   const slots = ctx.get('slots') as SlotsServiceLike | undefined
-  if (slots === undefined || slots === null) return
+  if (slots === undefined) return
 
   /**
    * 家族兼容层（`webUiSettings`）/ 旧官方通道（`settingsScope`）：按 namespace 绑定。
@@ -106,7 +100,7 @@ export function apply(ctx: PluginClientContextLike): void {
    */
   const findBinder = (): SettingsScopeBinderLike | undefined => {
     const binder = (ctx.get('webUiSettings') ?? ctx.get('settingsScope')) as SettingsScopeBinderLike | undefined
-    return binder !== undefined && binder !== null && typeof binder.bind === 'function' ? binder : undefined
+    return binder !== undefined && typeof binder.bind === 'function' ? binder : undefined
   }
 
   /**
@@ -161,7 +155,7 @@ export function apply(ctx: PluginClientContextLike): void {
   const first = resolveScope()
   if (first.found) {
     seatRow(first.scope)
-  } else if (typeof ctx.inject === 'function') {
+  } else {
     // 设置通道通常晚于本插件激活：家族兼容层要等自己的 connection / remote 就位才会
     // 提供 `webUiSettings`，官方 `configForms` 由设置域插件提供。等任一个出现再补登记。
     // ⚠️ 两个服务都**不进** `inject` 数组：旧宿主没有 `webUiSettings`，硬依赖会让条目永远 pending。

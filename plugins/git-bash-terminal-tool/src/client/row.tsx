@@ -7,7 +7,7 @@
  * 终端工具
  * [PowerShell（pwsh）] [Git Bash（bash）]          ← 默认只显示这两个
  *    ↓ 用户点了 Git Bash 之后才出现：
- * Git Bash 路径  [ D:\env\msys2\usr\bin\bash.exe ] [自动发现]
+ * Git Bash 路径  [ C:/Program Files/Git/bin/bash.exe ] [自动发现]
  *   （多条已知路径时，路径栏变成下拉列表；路径栏只在 bash 方言下存在）
  * ```
  *

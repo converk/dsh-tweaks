@@ -29,6 +29,7 @@ import {
   validateEscalationArgs,
 } from './escalation.js'
 import type {
+  ApprovalServiceLike,
   CollectedOutputLike,
   ConfinedArgvLike,
   ContentBlockLike,
@@ -37,9 +38,12 @@ import type {
   SandboxInfoLike,
   SandboxMode,
   SandboxPolicyLike,
+  SandboxPolicyServiceLike,
+  SandboxProviderLike,
+  ShellEnvRegistryLike,
   SubprocessCollectLike,
-  SubprocessHandleLike,
   SubprocessOutputReaderLike,
+  SubprocessRuntimeLike,
   ToolDefinitionLike,
   ToolResultLike,
   ToolRunContextLike,
@@ -145,22 +149,6 @@ export interface PromotedValue {
 /** 工具的规范输出值。 */
 export type BashToolValue = ForegroundValue | BackgroundValue | PromotedValue
 
-/** `ctx.subprocess` 的最小面（只用到 collect 模式）。 */
-export interface BashSubprocessLike {
-  spawn(spec: {
-    argv: readonly string[]
-    cwd: string
-    stdio: {
-      stdin: 'ignore'
-      stdout: SubprocessCollectLike
-      stderr: SubprocessCollectLike
-    }
-    graceMs: number
-    signal?: AbortSignal | undefined
-    env?: NodeJS.ProcessEnv | undefined
-  }): SubprocessHandleLike
-}
-
 /** 一个任务输出「拉取源」（`ctx.jobs.start` 的 `output` 字段）。 */
 export interface BashJobSourceLike {
   readonly channel: string
@@ -216,24 +204,11 @@ export interface BashToolRuntime {
   /** Git Bash 可执行文件的绝对路径。 */
   readonly bashPath: string
   /** `ctx.subprocess`（必需）。 */
-  readonly subprocess: BashSubprocessLike
+  readonly subprocess: SubprocessRuntimeLike
   /** `ctx.sandboxPolicy`（advertise 沙箱升级后必需）。 */
-  readonly sandboxPolicy?: { resolve(request?: { session?: object; mode?: SandboxMode }): SandboxPolicyLike } | undefined
-  /**
-   * `ctx.sandbox`（受限模式必需）。
-   *
-   * ⚠️ `confine` 自 DSH **0.1.6** 起是 **async**（0.1.5-rc.1 还是同步返回值；本插件最低
-   * 支持 0.2.0，所以一律按 Promise 处理）。忘了 await 会拿到一个 Promise：
-   * `confined.argv` 是 undefined，真机表现就是 `Error: undefined is not iterable`。
-   */
-  readonly sandbox?:
-    | {
-        confine(
-          argv: readonly string[],
-          policy: { mode: 'read-only' | 'workspace-write'; workspaceRoot: string; sessionId?: unknown },
-        ): Promise<ConfinedArgvLike>
-      }
-    | undefined
+  readonly sandboxPolicy?: SandboxPolicyServiceLike | undefined
+  /** `ctx.sandbox`（受限模式必需；`confine` 是 async，见 `types.ts`）。 */
+  readonly sandbox?: SandboxProviderLike | undefined
   /** `ctx.jobs`（`run_in_background` 时必需）。 */
   readonly jobs?: BashJobsLike | undefined
   /**
@@ -244,23 +219,11 @@ export interface BashToolRuntime {
    */
   readonly workingDirectory?: WorkingDirectoryServiceLike | undefined
   /** `ctx.shellEnv`（可选：拿得到就注入受管 `DSH_*`）。 */
-  readonly shellEnv?: { collect(execution: { agent?: object }): Readonly<Record<string, string>> } | undefined
+  readonly shellEnv?: ShellEnvRegistryLike | undefined
   /** `ctx.approval`（沙箱升级时必需）。 */
-  readonly approval?:
-    | {
-        request(request: {
-          agent: object
-          toolName: string
-          callId: string
-          reason: string
-          signal?: AbortSignal | undefined
-        }): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>
-      }
-    | undefined
+  readonly approval?: ApprovalServiceLike | undefined
   /** `ctx.shell.sandboxMode`：定义了才 advertise 升级字段（对齐官方判据）。 */
   readonly shellSandboxMode?: SandboxMode | undefined
-  /** 是否允许后台任务（默认 true）。 */
-  readonly backgroundEnabled?: boolean | undefined
   /** 非致命告警的去处（例如「任务登记被拒 → 降级为前台硬超时」）；不传则静默。 */
   readonly warn?: ((message: string) => void) | undefined
 }
@@ -418,21 +381,14 @@ export function parseExitStatus(text: string): { body: string } & ({ exitCode: n
   return { body: text, exitCode: 0 }
 }
 
-/** 从内容块数组里取唯一一段文本。 */
-function firstText(content: readonly ContentBlockLike[]): string | undefined {
-  const block = content.length === 1 ? content[0] : undefined
-  return block !== undefined && block.type === 'text' ? block.text : undefined
-}
-
 /**
  * 解析并校验模型给的参数（口径对齐官方 `validateBashArgs`）。
  * @param args - 原始参数。
- * @param backgroundEnabled - 本部署是否暴露 `run_in_background`。
  * @param escalationAdvertised - 本部署是否 advertise 了升级字段。
  * @returns 窄化后的参数。
  * @throws 参数非法时的逐字对齐文案。
  */
-export function parseBashArgs(args: unknown, backgroundEnabled: boolean, escalationAdvertised: boolean): BashToolArgs {
+export function parseBashArgs(args: unknown, escalationAdvertised: boolean): BashToolArgs {
   const record = typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {}
   const command = record.command
   const description = record.description
@@ -451,9 +407,6 @@ export function parseBashArgs(args: unknown, backgroundEnabled: boolean, escalat
   const runInBackground = record.run_in_background
   if (runInBackground !== undefined && typeof runInBackground !== 'boolean') {
     throw new Error('invalid run_in_background: expected a boolean')
-  }
-  if (runInBackground === true && !backgroundEnabled) {
-    throw new Error('run_in_background is disabled for this deployment')
   }
   const sandboxPermissions = record.sandbox_permissions
   const justification = record.justification
@@ -480,19 +433,11 @@ export function parseBashArgs(args: unknown, backgroundEnabled: boolean, escalat
 
 /**
  * 构造工具描述文本（口径与官方 `bashDescription` 一致，但明确是 Git Bash 方言）。
- * @param backgroundEnabled - 是否暴露 `run_in_background`。
  * @param escalationModes - advertise 的升级目标。
  * @param workingDirectory - 本部署是否有会变的「会话当前目录」（0.2.1+）。
  * @returns 模型可见的工具描述。
  */
-export function bashDescription(
-  backgroundEnabled: boolean,
-  escalationModes: readonly SandboxMode[],
-  workingDirectory = false,
-): string {
-  const background = backgroundEnabled
-    ? 'Set `run_in_background: true` for long-running commands: the call returns a job id immediately; read its output with `job_output` and stop it with `job_kill`.'
-    : 'Background execution is not available; long-running commands must finish within the timeout.'
+export function bashDescription(escalationModes: readonly SandboxMode[], workingDirectory = false): string {
   const base =
     'Execute a command in Git Bash (`bash -c` on Windows) and return its stdout/stderr. ' +
     'The shell is POSIX: use forward slashes and `$VAR`; a Windows path such as C:/work is accepted as-is, and /c/work reaches the same place when a POSIX spelling is required. ' +
@@ -502,7 +447,7 @@ export function bashDescription(
     'Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]` — a policy denial, not a bug in the command; do not retry another way. ' +
     'Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. ' +
     'Provide `description` before `command` in the arguments. ' +
-    background
+    'Set `run_in_background: true` for long-running commands: the call returns a job id immediately; read its output with `job_output` and stop it with `job_kill`.'
   if (escalationModes.length === 0) return base
   return (
     base +
@@ -529,13 +474,11 @@ export function bashDescription(
  * 为什么必须这样：官方子集校验器（`dsh-tools` 的 `checkSchemaNode`）规定
  * `required` 只能出现在 `type:"object"` 节点上且必须是**字符串数组**，
  * 写在字符串/布尔叶子上会直接被判为不合规（真机上栽过一次）。
- * @param backgroundEnabled - 是否暴露 `run_in_background`。
  * @param escalationModes - advertise 的升级目标（空表示不暴露升级字段）。
  * @param promote - 本部署是否支持「前台超时转后台」（决定 `timeoutMs` 的措辞，与官方一致）。
  * @returns 参数 JSON Schema。
  */
 export function bashParameters(
-  backgroundEnabled: boolean,
   escalationModes: readonly SandboxMode[],
   promote = false,
 ): Record<string, unknown> {
@@ -558,12 +501,10 @@ export function bashParameters(
         'Working directory for this command. Defaults to the session current working directory; a relative path is resolved against it.',
     },
   }
-  if (backgroundEnabled) {
-    properties.run_in_background = {
-      type: 'boolean',
-      description:
-        'Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies.',
-    }
+  properties.run_in_background = {
+    type: 'boolean',
+    description:
+      'Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies.',
   }
   if (escalationModes.length > 0) {
     properties.sandbox_permissions = {
@@ -842,8 +783,8 @@ export function composePath(
   exists: (path: string) => boolean = existsSync,
 ): string {
   const entries = bashPathEntries(bashPath, exists)
-  // 归一化要同时抹掉**分隔符差异**与大小写：`resolve()` 产出的是 `D:\env\Git\cmd`，
-  // 而环境 PATH 里常见的是 `D:/env/Git/cmd` —— 不归一化就会判成两条不同的目录。
+  // 归一化要同时抹掉**分隔符差异**与大小写：`resolve()` 产出的是 `C:\Program Files\Git\cmd`，
+  // 而环境 PATH 里常见的是 `C:/Program Files/Git/cmd` —— 不归一化就会判成两条不同的目录。
   const normalize = pathKey
   const taken = new Set(entries.map(normalize))
   const ambient: string[] = []
@@ -873,9 +814,9 @@ export function composeEnv(runtime: BashToolRuntime, exec: ToolRunContextLike): 
     if (process.env[key] === undefined) env[key] = value
   }
   try {
-    // 官方 0.2.1 的 collect 接收完整 ToolExecution（会读 agent 以及将来的字段）；
+    // 官方 collect 接收完整 ToolExecution（会读 agent 以及将来的字段）；
     // 本插件的 exec 投影是它的结构子集，直接透传比只给 { agent } 更稳。
-    const collected = runtime.shellEnv?.collect(exec as object) ?? undefined
+    const collected = runtime.shellEnv?.collect(exec) ?? undefined
     if (collected !== undefined) for (const [key, value] of Object.entries(collected)) env[key] = value
   } catch {
     // shellEnv 失败不影响命令执行。
@@ -898,7 +839,6 @@ interface ResolvedCall {
  * @returns 可直接交给 `agent.ctx.tools.register` 的工具定义。
  */
 export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
-  const backgroundEnabled = runtime.backgroundEnabled ?? true
   const escalationModes: readonly SandboxMode[] = runtime.shellSandboxMode === undefined ? [] : ESCALATION_TARGETS
   /**
    * 本部署能否「前台超时 → 转后台」（官方 0.2.x 的 `promoteOnTimeout`）。
@@ -908,7 +848,6 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
    */
   const jobs = runtime.jobs
   const promote =
-    backgroundEnabled &&
     jobs !== undefined &&
     typeof jobs.wait === 'function' &&
     typeof jobs.read === 'function' &&
@@ -926,8 +865,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
   /**
    * 受限模式：把 argv 交给 `ctx.sandbox.confine`；未受限则原样执行。
    *
-   * ⚠️ `confine` 是 **async**（DSH 0.1.6 起；自 0.4.1 起本插件最低支持 0.2.0）——必须 await，
-   * 否则拿到的是 Promise：`argv` 与 `runnerFailureRules` 全是 undefined。
+   * ⚠️ `confine` 是 **async**，必须 await，否则拿到 Promise（`argv` 与 `runnerFailureRules` 全是 undefined）。
    */
   const confineArgv = async (
     argv: readonly string[],
@@ -973,7 +911,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
 
   /** 解析本次调用的策略 / cwd / 超时 / 环境。 */
   const prepare = async (rawArgs: unknown, exec: ToolRunContextLike): Promise<ResolvedCall> => {
-    const args = parseBashArgs(rawArgs, backgroundEnabled, escalationModes.length > 0)
+    const args = parseBashArgs(rawArgs, escalationModes.length > 0)
     const standing = resolvePolicy(exec)
     const approvedMode = await approveIfAsked(args, exec, standing)
     const policy: SandboxPolicyLike | undefined =
@@ -1415,8 +1353,8 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
 
   return {
     name: 'bash',
-    description: bashDescription(backgroundEnabled, escalationModes, runtime.workingDirectory !== undefined),
-    parameters: bashParameters(backgroundEnabled, escalationModes, promote),
+    description: bashDescription(escalationModes, runtime.workingDirectory !== undefined),
+    parameters: bashParameters(escalationModes, promote),
     output: {
       schema: bashOutputSchema(),
       render: (_args: unknown, value: unknown): ContentBlockLike[] => {
@@ -1483,7 +1421,8 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
     },
     presentResult(rawArgs: unknown, result: ToolResultLike): unknown {
       const record = typeof rawArgs === 'object' && rawArgs !== null ? (rawArgs as Record<string, unknown>) : {}
-      const raw = firstText(result.content)
+      const block = result.content.length === 1 ? result.content[0] : undefined
+      const raw = block !== undefined && block.type === 'text' ? block.text : undefined
       if (raw === undefined) return undefined
       // 后台确认与「转后台」都不是终态输出 → 用通用 fenced 卡片，不给退出码 pill（与官方一致）。
       const promoted = (result.value as { kind?: unknown } | undefined)?.kind === 'promoted'

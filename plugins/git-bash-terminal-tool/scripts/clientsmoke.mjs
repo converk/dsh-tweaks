@@ -564,7 +564,7 @@ check('默认（pwsh）不显示自动发现按钮', !pwshJson.includes('row.dis
 // 需求 1 + 2：切到 bash 才出现路径栏与「自动发现」；单条路径是输入框。
 const bashTree = await renderRow(
   { platform: 'win32', dialect: 'bash', bashPath: '', settingsAvailable: true, capability: { supported: true } },
-  { dialect: 'bash', bashPath: 'D:/env/msys2/usr/bin/bash.exe', bashCandidates: [] },
+  { dialect: 'bash', bashPath: 'C:/msys64/usr/bin/bash.exe', bashCandidates: [] },
 )
 const bashJson = JSON.stringify(bashTree)
 const bashButtons = collect(bashTree, 'button')
@@ -575,7 +575,7 @@ check('bash 下按钮 = 两个 chip + 自动发现', bashButtons.length === 3, S
 check('只有一条已知路径时用输入框', bashInputs.length === 1 && collect(bashTree, 'select').length === 0)
 check(
   '输入框里是已保存的路径',
-  bashInputs[0]?.props?.defaultValue === 'D:/env/msys2/usr/bin/bash.exe',
+  bashInputs[0]?.props?.defaultValue === 'C:/msys64/usr/bin/bash.exe',
   String(bashInputs[0]?.props?.defaultValue),
 )
 check('候选清单（可用候选/来源/版本）已不再渲染', !bashJson.includes('row.available') && !bashJson.includes('row.source.'))
@@ -585,15 +585,15 @@ const multiTree = await renderRow(
   { platform: 'win32', dialect: 'bash', bashPath: '', settingsAvailable: true, capability: { supported: true } },
   {
     dialect: 'bash',
-    bashPath: 'D:/env/msys2/usr/bin/bash.exe',
-    bashCandidates: ['D:/env/msys2/usr/bin/bash.exe', 'C:/Program Files/Git/bin/bash.exe'],
+    bashPath: 'C:/msys64/usr/bin/bash.exe',
+    bashCandidates: ['C:/msys64/usr/bin/bash.exe', 'C:/Program Files/Git/bin/bash.exe'],
   },
 )
 const selects = collect(multiTree, 'select')
 check('多条路径时路径栏是下拉列表', selects.length === 1, String(selects.length))
 check(
   '下拉列表的当前值就是选中的路径',
-  selects[0]?.props?.value === 'D:/env/msys2/usr/bin/bash.exe',
+  selects[0]?.props?.value === 'C:/msys64/usr/bin/bash.exe',
   String(selects[0]?.props?.value),
 )
 const options = collect(selects[0], 'option')
@@ -610,7 +610,7 @@ const snapshotState = {
   settingsAvailable: true,
   capability: { supported: true },
 }
-const snapshotSettings = { dialect: 'bash', bashPath: 'D:/env/msys2/usr/bin/bash.exe', bashCandidates: [] }
+const snapshotSettings = { dialect: 'bash', bashPath: 'C:/msys64/usr/bin/bash.exe', bashCandidates: [] }
 
 /** 行控件是否全部可点：两个 chip、路径输入框、自动发现按钮都 enabled。 */
 function rowControlsEnabled(tree) {

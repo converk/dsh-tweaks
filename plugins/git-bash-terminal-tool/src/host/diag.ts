@@ -7,7 +7,7 @@
  *
  * ```
  * %TEMP%\dsh-git-bash-terminal-tool.log   （Windows；其他平台为 os.tmpdir()）
- * 2026-09-13T23:41:35.123Z pid=19604 register: rpc=ok
+ * 2025-01-01T00:00:00.000Z pid=12345 register: rpc=ok
  * ```
  *
  * ⚠️ 测试要写自己的文件，别污染这份日志 —— 见 {@link diagFile}。

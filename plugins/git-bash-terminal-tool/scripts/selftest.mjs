@@ -39,7 +39,6 @@ import {
   parseBashArgs,
   parseExitStatus,
   pathKey,
-  probeCapability,
   probeDeploymentCapability,
   processOutcome,
   renderJobRead,
@@ -137,7 +136,6 @@ function fakeProbes(options) {
       const entry = Object.entries(options.registry ?? {}).find(([k]) => k.replace(/[\\/]+/g, "/") === wanted)
       return entry?.[1]
     },
-    probeVersion: (path) => options.versions?.[win(path)],
     pathDirs: () => options.pathDirs ?? [],
     env: (name) => options.env?.[name],
   }
@@ -153,30 +151,30 @@ section('发现算法：WSL 硬排除（决策 A）')
     isBlockedBash('C:/Users/me/AppData/Local/Microsoft/WindowsApps/bash.exe', (n) => env[n]),
   )
   check('大小写不敏感', isBlockedBash('c:/windows/system32/BASH.EXE', (n) => env[n]))
-  check('普通 Git Bash 不被排除', !isBlockedBash('D:/env/msys2/usr/bin/bash.exe', (n) => env[n]))
+  check('普通 Git Bash 不被排除', !isBlockedBash('C:/msys64/usr/bin/bash.exe', (n) => env[n]))
 }
 
 section('发现算法：由 git 反推 bash（决策 C）')
 {
-  const gitExe = 'D:/env/msys2/usr/bin/git.exe'
+  const gitExe = 'C:/msys64/usr/bin/git.exe'
   const probes = fakeProbes({
-    existing: [gitExe, 'D:/env/msys2/usr/bin/bash.exe'],
+    existing: [gitExe, 'C:/msys64/usr/bin/bash.exe'],
     whereGit: [gitExe],
     env: { SystemRoot: 'C:/Windows' },
   })
   const candidates = discoverBash({ probes })
   const paths = candidates.map((c) => win(c.path))
-  check('反推出 MSYS2 的 bash', paths.includes(win('D:/env/msys2/usr/bin/bash.exe')), paths.join(' | '))
+  check('反推出 MSYS2 的 bash', paths.includes(win('C:/msys64/usr/bin/bash.exe')), paths.join(' | '))
   check('候选带来源 git-path', candidates.every((c) => c.source === 'git-path'))
   check('WSL 的 bash 不出现在候选里', !paths.some((p) => p.toLowerCase().includes('system32')))
-  check('存在的那条 valid 为 true', candidates.find((c) => win(c.path) === win('D:/env/msys2/usr/bin/bash.exe'))?.valid === true)
+  check('存在的那条 valid 为 true', candidates.find((c) => win(c.path) === win('C:/msys64/usr/bin/bash.exe'))?.valid === true)
 }
 
 section('发现算法：Git for Windows 注册表（含悬空残留）')
 {
   const dangling = fakeProbes({
     existing: [],
-    registry: { 'HKLM|SOFTWARE\\GitForWindows|InstallPath': 'D:/env/Git' },
+    registry: { 'HKLM|SOFTWARE\\GitForWindows|InstallPath': 'C:/tools/Git' },
     env: {},
   })
   check('悬空注册表不产生候选', discoverBash({ probes: dangling }).length === 0)
@@ -187,9 +185,8 @@ section('发现算法：Git for Windows 注册表（含悬空残留）')
     dirs: [root],
     registry: { 'HKLM|SOFTWARE\\GitForWindows|InstallPath': root },
     env: {},
-    versions: { [win(`${root}/bin/bash.exe`)]: 'GNU bash, version 5.2.26' },
   })
-  const candidates = discoverBash({ probes: valid, withVersion: true })
+  const candidates = discoverBash({ probes: valid })
   check('注册表来源出 2 个候选', candidates.length === 2, JSON.stringify(candidates.map((c) => c.path)))
   // 回归：安装根是目录，不能被 fileExists（只认文件/链接）当成不存在而跳过整段扫描。
   const rootOnly = fakeProbes({
@@ -205,11 +202,6 @@ section('发现算法：Git for Windows 注册表（含悬空残留）')
     JSON.stringify(discoverBash({ probes: rootOnly }).map((c) => c.path)),
   )
   check('来源标记为 git-for-windows', candidates.every((c) => c.source === 'git-for-windows'))
-  check('版本探测写进候选', candidates[0]?.version === 'GNU bash, version 5.2.26')
-  check(
-    '默认不探测版本（避免 Fetch handler 同步 spawn 阻塞）',
-    discoverBash({ probes: valid })[0]?.version === undefined,
-  )
 }
 
 section('发现算法：排序与去重')
@@ -222,11 +214,11 @@ section('发现算法：排序与去重')
       `${root}/usr/bin/bash.exe`,
       `${msys}/usr/bin/bash.exe`,
       'D:/saved/bash.exe',
-      'D:/env/msys2/usr/bin/bash.exe',
-      'D:/env/msys2/usr/bin/git.exe',
+      'C:/msys64/usr/bin/bash.exe',
+      'C:/msys64/usr/bin/git.exe',
     ],
     dirs: [root, msys],
-    whereGit: ['D:/env/msys2/usr/bin/git.exe'],
+    whereGit: ['C:/msys64/usr/bin/git.exe'],
     registry: { 'HKLM|SOFTWARE\\GitForWindows|InstallPath': root },
     env: {},
   })
@@ -598,16 +590,13 @@ function fakeAgent(options = {}) {
       callback(ctx)
     },
   }
-  return { agent: { id, ctx, session: { id, header: { cwd: 'D:/work' } } }, calls }
+  return { agent: { id, ctx, session: { id, header: { cwd: 'C:/work' } } }, calls }
 }
 
-/** 一个只有可选服务读取能力的宿主 ctx（替换逻辑只用 `get`）。 */
-const HOST = { get: () => undefined, on() {}, effect() {} }
-
 /**
- * 本机可用的 Git Bash（发现算法跑一次，替换断言与真机端到端共用）。
+ * 当前机器可用的 Git Bash（发现算法跑一次，替换断言与真机端到端共用）。
  *
- * ⚠️ 这里曾经写死成作者机器上的 `D:/env/msys2/usr/bin/bash.exe`：换一台机器整段就崩
+ * ⚠️ 这里曾经写死成某台开发机上的 Git Bash 路径：换一台机器整段就崩
  * （`validateSettings` 报「找不到文件」→ 后续 `calls.register[0]` 是 undefined 直接抛）。
  * 现在走与「真机端到端」同一套发现算法，找不到就把依赖真实路径的断言整段 skip。
  */
@@ -623,14 +612,6 @@ function fakeHost(services = {}) {
   }
 }
 
-section('替换：能力探测')
-{
-  const { agent } = fakeAgent()
-  const capability = probeCapability(agent.ctx)
-  check('探测到 tools', capability.toolsLike && capability.registerLike && capability.restrictLike)
-  check('探测到 systemPrompt', capability.promptLike)
-}
-
 // ⚠️ replaceTerminalTool 的第一个判定就是 process.platform，非 win32 一律跳过 ——
 // 这些行为断言只在 Windows 上跑（插件本身也只在 win32 挂载）。
 if (process.platform !== 'win32') {
@@ -639,7 +620,7 @@ if (process.platform !== 'win32') {
 } else {
 if (GIT_BASH === null) {
   section('替换：成功路径的四个动作')
-  console.log('  skip 本机没有可用的 Git Bash：构造不出「路径合法」的替换场景')
+  console.log('  skip 当前机器没有可用的 Git Bash：构造不出「路径合法」的替换场景')
 } else {
 section('替换：成功路径的四个动作')
 {
@@ -689,7 +670,7 @@ section('替换：跳过分支')
   check('bashPath 为空时跳过', noPath.applied === false && noPath.reason.includes('bashPath'), noPath.reason)
 
   if (GIT_BASH === null) {
-    console.log('  skip 本机没有可用的 Git Bash：跳过依赖真实路径的两条')
+    console.log('  skip 当前机器没有可用的 Git Bash：跳过依赖真实路径的两条')
   } else {
   const services = { subprocess: { spawn() {} } }
   const hidden = fakeAgent({ restrictThrows: true, services })
@@ -810,7 +791,7 @@ section('契约：per-agent 事件在部署里真的存在（有部署时）')
 
 /**
  * 官方 JSON Schema 子集的**忠实移植**（`dsh-tools/lib/index.js` 的 `checkSchemaNode` /
- * `checkObjectSchemaTail`，0.1.5-rc.1 实测）。
+ * `checkObjectSchemaTail`，0.2.x 实测）。
  *
  * 为什么要移植：`tools.register` 会对 `output.schema` 跑 `assertSupportedJsonSchema`，
  * 而官方源码里 `defineTool` 的 `required: true` 是 **DSL 语法**，编译时会提升成父对象的
@@ -1006,7 +987,7 @@ function diffShape(actual, expected, path = 'schema') {
 }
 
 /**
- * 官方 `defineTool` **编译后**的 `output.schema` 快照（本机部署实测，非手写猜测）。
+ * 官方 `defineTool` **编译后**的 `output.schema` 快照（部署实测，非手写猜测）。
  * 断言它同形，等于断言 UI 的 terminal 卡片/退出码 pill 契约不变。
  */
 const OFFICIAL_OUTPUT_SNAPSHOT = {
@@ -1108,7 +1089,7 @@ console.log(
 section('设置：用部署里的 dsh-settings 复核 volatileForm（有部署时）')
 {
   const home = process.env.DSH_STABLE_HOME
-  // 本机有 DSH 源码/单包产物时可直接指到具体文件（不必凑出完整安装目录）。
+  // 有 DSH 源码/单包产物时可直接指到具体文件（不必凑出完整安装目录）。
   const settingsEntryOverride = process.env.DSH_SETTINGS_ENTRY
   const schemaEntryOverride = process.env.DSH_SCHEMASTERY_ENTRY
   if (home === undefined && settingsEntryOverride === undefined) {
@@ -1235,7 +1216,7 @@ section('工具：parameters / output.schema 形状（对齐官方编译结果�
   // 5) 真实返回的值必须落在声明的 output.schema 里。
   const foregroundValue = {
     kind: 'foreground',
-    cwd: 'D:/work',
+    cwd: 'C:/work',
     exitCode: 0,
     signal: null,
     timedOut: false,
@@ -1253,11 +1234,11 @@ section('工具：parameters / output.schema 形状（对齐官方编译结果�
     ],
     // 官方 0.2.x 新增：被 job_kill 停过的运行带 stopped。
     ['foreground+stopped', { ...foregroundValue, exitCode: 1, stopped: 'session archived' }, true],
-    ['background', { kind: 'background', jobId: 'bash-1', cwd: 'D:/work' }, true],
+    ['background', { kind: 'background', jobId: 'bash-1', cwd: 'C:/work' }, true],
     // 官方 0.2.x 新增的第三分支：前台等超时后转后台。
-    ['promoted', { kind: 'promoted', jobId: 'bash-1', cwd: 'D:/work', timeoutMs: 1000, output: 'partial\n' }, true],
+    ['promoted', { kind: 'promoted', jobId: 'bash-1', cwd: 'C:/work', timeoutMs: 1000, output: 'partial\n' }, true],
     // additionalProperties: false —— 多带字段必须被拒，否则 UI 会拿到没约定的形状。
-    ['promoted+多余字段', { kind: 'promoted', jobId: 'bash-1', cwd: 'D:/work', timeoutMs: 1000, output: '', extra: 1 }, false],
+    ['promoted+多余字段', { kind: 'promoted', jobId: 'bash-1', cwd: 'C:/work', timeoutMs: 1000, output: '', extra: 1 }, false],
   ]
   for (const [name, value, shouldPass] of values) {
     const violations = validateValue(bashOutputSchema(), value)
@@ -1285,7 +1266,7 @@ section('工具：DSH 0.2.1 的 cwd / workingDirectory / job toolCall')
     return {
       calls,
       runtime: {
-        bashPath: 'D:/env/Git/bin/bash.exe',
+        bashPath: 'C:/tools/Git/bin/bash.exe',
         subprocess: {
           spawn(spec) {
             calls.cwd.push(spec.cwd)
@@ -1375,7 +1356,7 @@ section('工具：DSH 0.2.1 的 cwd / workingDirectory / job toolCall')
   {
     const specs = []
     const tool = createBashTool({
-      bashPath: 'D:/env/Git/bin/bash.exe',
+      bashPath: 'C:/tools/Git/bin/bash.exe',
       subprocess: { spawn: () => { throw new Error('not reached') } },
       jobs: { start(spec) { specs.push(spec); return 'bash-job-1' } },
     })
@@ -1398,7 +1379,7 @@ section('工具：DSH 0.2.1 的 cwd / workingDirectory / job toolCall')
   {
     const specs = []
     const tool = createBashTool({
-      bashPath: 'D:/env/Git/bin/bash.exe',
+      bashPath: 'C:/tools/Git/bin/bash.exe',
       subprocess: { spawn: () => { throw new Error('not reached') } },
       jobs: { start(spec) { specs.push(spec); return 'bash-job-2' } },
     })
@@ -1435,17 +1416,17 @@ section('工具：参数校验文案')
 {
   throws(
     '空 command',
-    () => parseBashArgs({ command: '  ', description: 'x' }, true, false),
+    () => parseBashArgs({ command: '  ', description: 'x' }, false),
     'invalid command: expected a non-empty string',
   )
   throws(
     '空 description',
-    () => parseBashArgs({ command: 'ls', description: '' }, true, false),
+    () => parseBashArgs({ command: 'ls', description: '' }, false),
     'invalid description: expected a non-empty string',
   )
   throws(
     '非正数 timeoutMs',
-    () => parseBashArgs({ command: 'ls', description: 'x', timeoutMs: 0 }, true, false),
+    () => parseBashArgs({ command: 'ls', description: 'x', timeoutMs: 0 }, false),
     'invalid timeoutMs: expected a positive number, got 0',
   )
   throws(
@@ -1453,12 +1434,11 @@ section('工具：参数校验文案')
     () =>
       parseBashArgs(
         { command: 'ls', description: 'x', sandbox_permissions: 'workspace-write', justification: 'y' },
-        true,
         false,
       ),
     'sandbox_permissions is not available in this composition',
   )
-  check('合法参数通过', parseBashArgs({ command: 'ls', description: 'List' }, true, false).command === 'ls')
+  check('合法参数通过', parseBashArgs({ command: 'ls', description: 'List' }, false).command === 'ls')
 }
 
 section('工具：渲染与解析')
@@ -1520,17 +1500,17 @@ section('工具：渲染与解析')
   // （真机实测：PATH 前 8 条里 4 条是 MISS），而真正有用的 `…\Git\usr\bin` 反倒没被补上。
   check(
     'bashInstallRoot：<root>/bin/bash.exe 反推 <root>',
-    win(bashInstallRoot('D:/env/Git/bin/bash.exe')) === win('D:/env/Git'),
-    bashInstallRoot('D:/env/Git/bin/bash.exe'),
+    win(bashInstallRoot('C:/tools/Git/bin/bash.exe')) === win('C:/tools/Git'),
+    bashInstallRoot('C:/tools/Git/bin/bash.exe'),
   )
   check(
     'bashInstallRoot：<root>/usr/bin/bash.exe 反推 <root>',
-    win(bashInstallRoot('D:/env/Git/usr/bin/bash.exe')) === win('D:/env/Git'),
-    bashInstallRoot('D:/env/Git/usr/bin/bash.exe'),
+    win(bashInstallRoot('C:/tools/Git/usr/bin/bash.exe')) === win('C:/tools/Git'),
+    bashInstallRoot('C:/tools/Git/usr/bin/bash.exe'),
   )
   // 只收真实存在的目录；假装只有 usr/bin、ucrt64/bin、cmd 存在（UCRT64 版 Git for Windows）。
-  const present = new Set([win('D:/env/Git/usr/bin'), win('D:/env/Git/ucrt64/bin'), win('D:/env/Git/cmd')])
-  const entries = bashPathEntries('D:/env/Git/bin/bash.exe', (p) => present.has(win(p)))
+  const present = new Set([win('C:/tools/Git/usr/bin'), win('C:/tools/Git/ucrt64/bin'), win('C:/tools/Git/cmd')])
+  const entries = bashPathEntries('C:/tools/Git/bin/bash.exe', (p) => present.has(win(p)))
   check(
     'bashPathEntries 只收录真实存在的目录',
     entries.length > 0 && entries.every((entry) => present.has(win(entry))),
@@ -1538,32 +1518,32 @@ section('工具：渲染与解析')
   )
   check(
     'bashPathEntries 不越出安装根（回归：曾经的 C:\\Program Files\\… 垃圾条目）',
-    entries.every((entry) => win(entry).startsWith(win('D:/env/Git'))),
+    entries.every((entry) => win(entry).startsWith(win('C:/tools/Git'))),
     entries.join(' | '),
   )
   check(
     'bashPathEntries 认 ucrt64（不是只认 mingw64）',
-    entries.some((entry) => win(entry) === win('D:/env/Git/ucrt64/bin')),
+    entries.some((entry) => win(entry) === win('C:/tools/Git/ucrt64/bin')),
     entries.join(' | '),
   )
   // ⚠️ 这两条只在 win32 上有意义：win() 就是**平台自己的** resolve()，而产品内部的
-  // bashPathEntries 也用 resolve() 拼候选项 —— 在 POSIX 上 resolve('D:/env/Git','usr','bin')
-  // 会被拼成「cwd + /D:/env/Git/usr/bin」，Windows 字面量与路径去重都对不上（CI 跑 ubuntu
+  // bashPathEntries 也用 resolve() 拼候选项 —— 在 POSIX 上 resolve('C:/tools/Git','usr','bin')
+  // 会被拼成「cwd + /C:/tools/Git/usr/bin」，Windows 字面量与路径去重都对不上（CI 跑 ubuntu
   // 必红）。插件本身只在 win32 注册工具（replaceTerminalTool 首个判定就是平台），
   // 所以按平台门控，而不是去改产品行为。
   if (process.platform !== 'win32') {
     console.log('  skip 非 win32：composePath 的顺序/去重断言依赖 Windows 路径语义')
   } else {
-    const composed = composePath('D:/env/Git/bin/bash.exe', 'C:/Windows;D:/env/Git/cmd', (p) => present.has(win(p)))
+    const composed = composePath('C:/tools/Git/bin/bash.exe', 'C:/Windows;C:/tools/Git/cmd', (p) => present.has(win(p)))
     const composedParts = composed.split(';').map((p) => win(p))
     check(
       'composePath 前置 Git 目录且保留环境 PATH',
-      composedParts[0] === win('D:/env/Git/usr/bin') && composedParts.at(-1) === win('C:/Windows'),
+      composedParts[0] === win('C:/tools/Git/usr/bin') && composedParts.at(-1) === win('C:/Windows'),
       composed,
     )
     check(
       'composePath 与环境 PATH 去重（同一目录不出现两次）',
-      composedParts.filter((part) => part === win('D:/env/Git/cmd')).length === 1,
+      composedParts.filter((part) => part === win('C:/tools/Git/cmd')).length === 1,
       composed,
     )
   }
@@ -1572,10 +1552,10 @@ section('工具：渲染与解析')
   // ⚠️ 真机可复现：原生程序按 ANSI 代码页（中文机器 936）写管道，DSH 按 UTF-8 解码 →
   // `cmd /c ver` / `python -c "print('中文')"` 读回来是乱码。cmd 改不了，Python 能改。
   // ⚠️ 这里**不能**断言「PATH 里含 Git」：composeEnv 用的是真 existsSync + 真 process.env.PATH，
-  // 在 MSYS2-only 的机器（没有 D:/env/Git）与 CI（ubuntu）上都会红 —— 正是「自测绑死某台机器的
+  // 在 MSYS2-only 的机器（没有 C:/tools/Git）与 CI（ubuntu）上都会红 —— 正是「自测绑死某台机器的
   // 环境」那条老路。要断言的是**契约**：composePath 只补真实存在的目录（旧实现会塞进 4 个不存在
-  // 的目录），且环境 PATH 原样保留；bashPath 用本机真的能发现到的那个。
-  const envRuntime = { bashPath: GIT_BASH ?? 'D:/env/Git/bin/bash.exe', subprocess: { spawn() {} } }
+  // 的目录），且环境 PATH 原样保留；bashPath 用当前机器真的能发现到的那个。
+  const envRuntime = { bashPath: GIT_BASH ?? 'C:/tools/Git/bin/bash.exe', subprocess: { spawn() {} } }
   const injected = composeEnv(envRuntime, { callId: 'c-env', signal: new AbortController().signal })
   check('注入 NO_COLOR / TERM / PAGER / GIT_PAGER', injected.TERM === 'dumb' && injected.NO_COLOR === '1' && injected.PAGER === 'cat' && injected.GIT_PAGER === 'cat')
   {
@@ -1625,9 +1605,9 @@ section('工具：渲染与解析')
 /** 受限执行用的工具运行期（`confine` 用假的，只是把 argv 原样包一层）。 */
 function confinedRuntime(extra) {
   return {
-    bashPath: 'D:/env/msys2/usr/bin/bash.exe',
+    bashPath: 'C:/msys64/usr/bin/bash.exe',
     shellSandboxMode: 'read-only',
-    sandboxPolicy: { resolve: () => ({ mode: 'read-only', workspaceRoot: 'D:/work' }) },
+    sandboxPolicy: { resolve: () => ({ mode: 'read-only', workspaceRoot: 'C:/work' }) },
     sandbox: {
       // ⚠️ 真件（dsh-sandbox-local）的 confine 是 async：这里也必须是 Promise，
       // 否则真机上的 `undefined is not iterable` 在自测里永远抓不到。
@@ -1654,7 +1634,7 @@ async function expectExecuteError(name, runtime, args, expected) {
     await tool.execute(args, {
       callId: 'call-x',
       signal: new AbortController().signal,
-      agent: { id: 'a', session: { id: 'a', header: { cwd: 'D:/work' } }, ctx: {} },
+      agent: { id: 'a', session: { id: 'a', header: { cwd: 'C:/work' } }, ctx: {} },
     })
     check(name, false, 'did not throw')
   } catch (error) {
@@ -1712,11 +1692,11 @@ section('工具：受限执行 + 升级（执行期判定）')
   const value = await tool.execute(escalated, {
     callId: 'call-ok',
     signal: new AbortController().signal,
-    agent: { id: 'a', session: { id: 'a', header: { cwd: 'D:/work' } }, ctx: {} },
+    agent: { id: 'a', session: { id: 'a', header: { cwd: 'C:/work' } }, ctx: {} },
   })
   check(
     '获准后 argv 被 confine 包住',
-    seen.length === 1 && seen[0][0] === 'D:/fake-runner.exe' && seen[0].includes('D:/env/msys2/usr/bin/bash.exe'),
+    seen.length === 1 && seen[0][0] === 'D:/fake-runner.exe' && seen[0].includes('C:/msys64/usr/bin/bash.exe'),
     JSON.stringify(seen[0] ?? []),
   )
   check('结果里的沙箱模式是获准的模式', value.sandbox?.mode === 'workspace-write', JSON.stringify(value.sandbox))
@@ -1731,7 +1711,7 @@ section('工具：后台任务钩子')
 {
   const batches = []
   const tool = createBashTool({
-    bashPath: 'D:/env/Git/bin/bash.exe',
+    bashPath: 'C:/tools/Git/bin/bash.exe',
     subprocess: {
       spawn() {
         return {
@@ -1756,7 +1736,7 @@ section('工具：后台任务钩子')
     {
       callId: 'call-bg',
       signal: new AbortController().signal,
-      agent: { id: 'session-42', session: { header: { cwd: 'D:/work' } } },
+      agent: { id: 'session-42', session: { header: { cwd: 'C:/work' } } },
     },
   )
   check('返回 background 值', value.kind === 'background' && value.jobId === 'bash-1', JSON.stringify(value))
@@ -1800,7 +1780,7 @@ section('工具：后台任务钩子')
     let settle
     let killedHooks
     const killedTool = createBashTool({
-      bashPath: 'D:/env/Git/bin/bash.exe',
+      bashPath: 'C:/tools/Git/bin/bash.exe',
       subprocess: {
         spawn() {
           return {
@@ -1828,7 +1808,7 @@ section('工具：后台任务钩子')
       {
         callId: 'call-kill',
         signal: new AbortController().signal,
-        agent: { id: 'session-9', session: { header: { cwd: 'D:/work' } } },
+        agent: { id: 'session-9', session: { header: { cwd: 'C:/work' } } },
       },
     )
     killedHooks.cancel('user stopped it')
@@ -1901,7 +1881,7 @@ section('工具：后台 + 受限（confine 必须先 await，再进同步的 ru
     {
       callId: 'call-bg3',
       signal: new AbortController().signal,
-      agent: { id: 'a', session: { id: 'a', header: { cwd: 'D:/work' } }, ctx: {} },
+      agent: { id: 'a', session: { id: 'a', header: { cwd: 'C:/work' } }, ctx: {} },
     },
   )
   check('后台返回 jobId', value.kind === 'background' && value.jobId === 'bash-bg-1', JSON.stringify(value))
@@ -1931,7 +1911,7 @@ section('工具：provider 失败不再伪装成 [exit code: 0]')
   // 官方 dsh-bash-local 的 result() 是直接抛回原错误（if (providerFailure !== undefined) throw ...）。
   const providerError = new Error('runner exploded before reporting an outcome')
   const tool = createBashTool({
-    bashPath: 'D:/env/Git/bin/bash.exe',
+    bashPath: 'C:/tools/Git/bin/bash.exe',
     subprocess: {
       spawn() {
         return {
@@ -1952,7 +1932,7 @@ section('工具：provider 失败不再伪装成 [exit code: 0]')
       {
         callId: 'call-provider',
         signal: new AbortController().signal,
-        agent: { id: 'session-provider', session: { header: { cwd: 'D:/work' } } },
+        agent: { id: 'session-provider', session: { header: { cwd: 'C:/work' } } },
       },
     )
     thrown = { notThrown: true, value }
@@ -1980,7 +1960,7 @@ section('工具：前台超时转后台 / 能力探测（promote）')
     const calls = { wait: [], read: [], kill: [], remove: [], terminated: 0 }
     let hooks
     const runtime = {
-      bashPath: 'D:/env/Git/bin/bash.exe',
+      bashPath: 'C:/tools/Git/bin/bash.exe',
       subprocess: {
         spawn() {
           return {
@@ -2026,7 +2006,7 @@ section('工具：前台超时转后台 / 能力探测（promote）')
     return { runtime, calls, hooks: () => hooks }
   }
 
-  const agent = { id: 'sess-7', session: { header: { cwd: 'D:/work' } } }
+  const agent = { id: 'sess-7', session: { header: { cwd: 'C:/work' } } }
 
   // ① 等满了而进程还在跑 → 转后台（官方 0.2.x 的默认行为，不再杀进程）。
   {
@@ -2067,7 +2047,7 @@ section('工具：前台超时转后台 / 能力探测（promote）')
   // ③ 能力探测：注册表缺 wait/read/kill/remove 时退回「超时即杀」，措辞也要跟着退。
   {
     const legacy = createBashTool({
-      bashPath: 'D:/env/Git/bin/bash.exe',
+      bashPath: 'C:/tools/Git/bin/bash.exe',
       subprocess: { spawn: () => undefined },
       jobs: { start: () => 'bash-1' },
     })
@@ -2221,7 +2201,7 @@ section('真机：用真的 Git Bash 跑命令')
 
 section('真机：命令确实由 bash 解释（POSIX 语义，不是 pwsh）')
 {
-  const usable = discoverBash({}).find((candidate) => candidate.valid)
+  const usable = DISCOVERED_BASH
   if (usable === undefined) {
     console.log('  skip 没有找到可用的 Git Bash')
   } else {

@@ -91,7 +91,7 @@ test('bundle 协议：sourcemap 是合法 v3 且内嵌源码', () => {
 // 插件源码契约面（不需要 DSH 部署）
 // ---------------------------------------------------------------------------
 
-test('插件源码契约面：inject / 席位键 / 条目 id / effect 接线', () => {
+test('插件源码契约面：inject / 席位键 / 条目 id', () => {
   const index = pluginFile('src/client/index.ts')
   assert.ok(index.includes("export const inject = ['slots']"), 'inject 必须是 slots（inputActions / useInput 是 props，不是服务）')
   assert.ok(index.includes("slots.inject('conversation.input.overlay'"), 'slots.inject 的席位键')
@@ -99,7 +99,10 @@ test('插件源码契约面：inject / 席位键 / 条目 id / effect 接线', (
   assert.ok(index.includes("export const OVERLAY_ENTRY_ID = 'smart-list'"), 'overlay 条目 id')
   assert.ok(index.includes('id: OVERLAY_ENTRY_ID'), '列表项必须用自有 id（不能替换官方条目）')
   assert.ok(index.includes('order: 60'), '列表项 order')
-  assert.ok(index.includes("ctx.effect(install, 'smart-list: composer overlay')"), 'slot 注入必须随插件卸载撤销')
+  assert.ok(
+    index.includes("slots.inject('conversation.input.overlay', () =>"),
+    '注册放在 slots.inject 回调内（disposer 由调用方 fiber 撤销，不要另包 ctx.effect）',
+  )
 })
 
 test('插件源码契约面：键盘拦截配方与 DOM 判据', () => {
@@ -304,16 +307,10 @@ class FakeElement {
   }
 }
 
-/** 组合一个 composer 文档：editable > ...；返回可编辑根与叶子节点。 */
-function buildDocument(editable) {
-  return editable
-}
-
 test('纯逻辑：行提取（普通段落，光标在行中 / 行尾）', () => {
   const text = new FakeText('1. hello world')
   const p = new FakeElement('p').append(text)
   const editable = new FakeElement('div').append(p)
-  buildDocument(editable)
   assert.equal(lineTextBeforeCaret(editable, text, 3), '1. ')
   assert.equal(lineTextBeforeCaret(editable, text, text.data.length), '1. hello world')
   assert.equal(lineTextBeforeCaret(editable, text, 0), '')
@@ -429,19 +426,8 @@ function mountOverlay(documentStub, options = {}) {
       return () => undefined
     },
   }
-  const ctx = {
-    get(name) {
-      return name === 'slots' ? slots.service : undefined
-    },
-    effect(callback, label) {
-      // 真实 cordis 的 ctx.effect 会立即执行回调并登记 disposer；overlay 的
-      // 注册是 eager 的，不能延后到渲染阶段。
-      const disposer = callback()
-      if (typeof disposer === 'function') documentStub.cleanups.push(disposer)
-      return disposer
-    },
-  }
-  client.apply(ctx)
+  // apply 只用 ctx.get 取 slots；slots.inject 的 disposer 归调用方 fiber（不需要再包 ctx.effect）。
+  client.apply({ get: (name) => (name === 'slots' ? slots.service : undefined) })
 
   assert.equal(slots.registerCalls.length, 1, 'apply 必须注册一个 overlay 条目')
   const registrationResult = slots.registerCalls[0]
@@ -544,6 +530,25 @@ function createInputActions(result = true) {
   }
 }
 
+/**
+ * 挂载 overlay，在给定行上派发一次 keydown。
+ * @param line - 假 composer 里的行文本（光标默认在行尾）。
+ * @param options - 可替换 inputActions / props / 事件字段，或在派发前改假 DOM（setup）。
+ * @returns 插入调用记录、事件对象与假 document。
+ */
+function pressShiftEnter(line, options = {}) {
+  const documentStub = createDocumentStub()
+  const inputActions = options.inputActions ?? createInputActions()
+  mountOverlay(documentStub, {
+    props: options.props?.(inputActions) ?? { useInput: (select) => select({ phase: 'plain' }), inputActions },
+  })
+  const prepared = prepareComposer(documentStub, line)
+  options.setup?.(documentStub, prepared)
+  const event = createKeyEvent(options.event)
+  documentStub.dispatchKey(event)
+  return { documentStub, inputActions, event }
+}
+
 test('客户端入口 apply：inject / 席位接线与缺 slots 静默降级', () => {
   const { sandbox, registration } = createClientBundleEnvironment()
   const seed = {
@@ -556,45 +561,31 @@ test('客户端入口 apply：inject / 席位接线与缺 slots 静默降级', (
 
   const slots = { injectCalls: [], registerCalls: [] }
   let injected
-  const injectDisposer = () => undefined
   slots.service = {
     inject(key, callback) {
       slots.injectCalls.push(key)
       injected = callback()
-      return injectDisposer
+      return () => undefined
     },
     register(options, component) {
       slots.registerCalls.push({ options, component })
       return 'register-disposer'
     },
   }
-  const effects = []
-  client.apply({
-    get: (name) => (name === 'slots' ? slots.service : undefined),
-    effect(callback, label) {
-      effects.push({ label, result: callback() })
-    },
-  })
+  // 只给 get：slot 注入的 disposer 挂在调用方 fiber 上，apply 不需要 ctx.effect。
+  client.apply({ get: (name) => (name === 'slots' ? slots.service : undefined) })
   assert.deepEqual(slots.injectCalls, ['conversation.input.overlay'])
   assert.equal(slots.registerCalls.length, 1)
   assert.equal(slots.registerCalls[0].options.name, 'conversation.input.overlay')
   assert.equal(slots.registerCalls[0].options.id, 'smart-list')
   assert.equal(slots.registerCalls[0].options.order, 60)
   assert.equal(typeof slots.registerCalls[0].component, 'function')
-  assert.equal(effects.length, 1)
-  assert.equal(effects[0].label, 'smart-list: composer overlay')
-  assert.equal(effects[0].result, injectDisposer, 'slots.inject 返回的注册 disposer 必须原样交还')
   assert.equal(injected, 'register-disposer', 'slots.inject 回调要把注册 disposer 交还')
   assert.equal(sandbox.document, undefined)
 })
 
 test('overlay 行为：列表行 Shift+Enter → 插入换行 + 下一个编号', () => {
-  const documentStub = createDocumentStub()
-  const inputActions = createInputActions()
-  mountOverlay(documentStub, { props: { useInput: (select) => select({ phase: 'plain' }), inputActions } })
-  prepareComposer(documentStub, '1. first item')
-  const event = createKeyEvent()
-  documentStub.dispatchKey(event)
+  const { inputActions, event } = pressShiftEnter('1. first item')
   assert.deepEqual(inputActions.calls, [{ text: '\n2. ', span: { start: 3, end: 3, draftRev: 7 } }])
   assert.equal(event.prevented, true, '成功接管后必须 preventDefault')
   assert.equal(event.stopped, true, '成功接管后必须 stopPropagation（压掉 Lexical 的软换行）')
@@ -610,12 +601,7 @@ test('overlay 行为：中文顿号 / 括号 / 无序 / 缩进 / 字面换行都
     ['1. first item\n2. second item', '\n3. '],
   ]
   for (const [line, expected] of cases) {
-    const documentStub = createDocumentStub()
-    const inputActions = createInputActions()
-    mountOverlay(documentStub, { props: { useInput: (select) => select({ phase: 'plain' }), inputActions } })
-    prepareComposer(documentStub, line)
-    const event = createKeyEvent()
-    documentStub.dispatchKey(event)
+    const { inputActions, event } = pressShiftEnter(line)
     assert.equal(inputActions.calls.length, 1, '应接管: ' + line)
     assert.equal(inputActions.calls[0].text, expected, '插入文本: ' + line)
     assert.equal(event.prevented, true)
@@ -630,12 +616,7 @@ test('overlay 行为：非列表 / 空条目 / 修饰键 / IME / 非 plain 相�
     { name: '数字正文', line: '1.5 million' },
   ]
   for (const testCase of cases) {
-    const documentStub = createDocumentStub()
-    const inputActions = createInputActions()
-    mountOverlay(documentStub, { props: { useInput: (select) => select({ phase: 'plain' }), inputActions } })
-    prepareComposer(documentStub, testCase.line)
-    const event = createKeyEvent()
-    documentStub.dispatchKey(event)
+    const { inputActions, event } = pressShiftEnter(testCase.line)
     assert.equal(inputActions.calls.length, 0, '不应接管: ' + testCase.name)
     assert.equal(event.prevented, false)
   }
@@ -650,70 +631,57 @@ test('overlay 行为：非列表 / 空条目 / 修饰键 / IME / 非 plain 相�
     { name: '非 Enter 键', event: { key: 'Tab' } },
   ]
   for (const testCase of variations) {
-    const documentStub = createDocumentStub()
-    const inputActions = createInputActions()
-    mountOverlay(documentStub, { props: { useInput: (select) => select({ phase: 'plain' }), inputActions } })
-    prepareComposer(documentStub, '1. first item')
-    const event = createKeyEvent(testCase.event)
-    documentStub.dispatchKey(event)
+    const { inputActions } = pressShiftEnter('1. first item', { event: testCase.event })
     assert.equal(inputActions.calls.length, 0, '不应接管: ' + testCase.name)
   }
 
-  const busy = createDocumentStub()
-  const busyActions = createInputActions()
-  mountOverlay(busy, { props: { useInput: (select) => select({ phase: 'claimed' }), inputActions: busyActions } })
-  prepareComposer(busy, '1. first item')
-  busy.dispatchKey(createKeyEvent())
-  assert.equal(busyActions.calls.length, 0, '相位不是 plain 时不能接管')
+  const busy = pressShiftEnter('1. first item', {
+    props: (inputActions) => ({ useInput: (select) => select({ phase: 'claimed' }), inputActions }),
+  })
+  assert.equal(busy.inputActions.calls.length, 0, '相位不是 plain 时不能接管')
 
-  const selected = createDocumentStub()
-  const selectedActions = createInputActions()
-  mountOverlay(selected, { props: { useInput: (select) => select({ phase: 'plain' }), inputActions: selectedActions } })
-  const { text } = prepareComposer(selected, '1. first item')
-  selected.selection = { rangeCount: 1, isCollapsed: false, anchorNode: text, anchorOffset: 0 }
-  selected.dispatchKey(createKeyEvent())
-  assert.equal(selectedActions.calls.length, 0, '有选区时不能接管')
+  const selected = pressShiftEnter('1. first item', {
+    setup(documentStub, { text }) {
+      documentStub.selection = { rangeCount: 1, isCollapsed: false, anchorNode: text, anchorOffset: 0 }
+    },
+  })
+  assert.equal(selected.inputActions.calls.length, 0, '有选区时不能接管')
 })
 
 test('overlay 行为：选区在别的 composer 卡片里不接管', () => {
-  const documentStub = createDocumentStub()
-  const inputActions = createInputActions()
-  mountOverlay(documentStub, { props: { useInput: (select) => select({ phase: 'plain' }), inputActions } })
-  prepareComposer(documentStub, '1. first item')
-  // 换一个不在本 overlay 卡片里的可编辑根
-  const otherCard = new FakeElement('div')
-  otherCard.attrs = { 'data-composer-card': '' }
-  const otherText = new FakeText('1. other')
-  const otherEditable = new FakeElement('div')
-  otherEditable.attrs = { contenteditable: 'true' }
-  otherEditable.append(new FakeElement('p').append(new FakeElement('span').append(otherText)))
-  otherCard.append(otherEditable)
-  documentStub.selection = { rangeCount: 1, isCollapsed: true, anchorNode: otherText, anchorOffset: otherText.data.length }
-  const event = createKeyEvent()
-  documentStub.dispatchKey(event)
+  const { inputActions, event } = pressShiftEnter('1. first item', {
+    setup(documentStub) {
+      // 换一个不在本 overlay 卡片里的可编辑根
+      const otherCard = new FakeElement('div')
+      otherCard.attrs = { 'data-composer-card': '' }
+      const otherText = new FakeText('1. other')
+      const otherEditable = new FakeElement('div')
+      otherEditable.attrs = { contenteditable: 'true' }
+      otherEditable.append(new FakeElement('p').append(new FakeElement('span').append(otherText)))
+      otherCard.append(otherEditable)
+      documentStub.selection = {
+        rangeCount: 1,
+        isCollapsed: true,
+        anchorNode: otherText,
+        anchorOffset: otherText.data.length,
+      }
+    },
+  })
   assert.equal(inputActions.calls.length, 0, '不能接管其他 composer 卡片')
   assert.equal(event.prevented, false)
 })
 
 test('overlay 行为：insertText 拒绝（修订号过期 / 提交中）时放行给编辑器', () => {
-  const documentStub = createDocumentStub()
-  const inputActions = createInputActions(false)
-  mountOverlay(documentStub, { props: { useInput: (select) => select({ phase: 'plain' }), inputActions } })
-  prepareComposer(documentStub, '1. first item')
-  const event = createKeyEvent()
-  documentStub.dispatchKey(event)
+  const { inputActions, event } = pressShiftEnter('1. first item', { inputActions: createInputActions(false) })
   assert.equal(inputActions.calls.length, 1, '会尝试插入')
   assert.equal(event.prevented, false, '插入失败时必须放行（否则 Shift+Enter 吞键）')
   assert.equal(event.stopped, false)
 })
 
 test('overlay 行为：useInput 缺省时仍按 insertText 自身的相位守卫工作', () => {
-  const documentStub = createDocumentStub()
-  const inputActions = createInputActions()
-  mountOverlay(documentStub, { props: { inputActions } })
-  prepareComposer(documentStub, '1. first item')
-  const event = createKeyEvent()
-  documentStub.dispatchKey(event)
+  const { inputActions, event } = pressShiftEnter('1. first item', {
+    props: (actions) => ({ inputActions: actions }),
+  })
   assert.equal(inputActions.calls.length, 1)
   assert.equal(event.prevented, true)
 })
@@ -837,7 +805,7 @@ function officialRootOf(entry) {
 function resolveOfficialRoots() {
   const delimiter = process.platform === 'win32' ? ';' : ':'
   const roots = []
-  for (const key of ['DSH_CONTRACT_HOMES', 'DSH_CONTRACT_HOME', 'DSH_STABLE_HOME', 'DSH_017_HOME']) {
+  for (const key of ['DSH_CONTRACT_HOMES', 'DSH_CONTRACT_HOME', 'DSH_STABLE_HOME']) {
     const value = process.env[key]
     if (value === undefined || value.length === 0) continue
     for (const entry of value.split(delimiter)) {

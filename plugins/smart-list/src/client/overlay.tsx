@@ -29,7 +29,7 @@ const COMPOSER_CARD_SELECTOR = '[data-composer-card]'
 /** 可编辑根判据（Lexical 给 contenteditable 根元素写的属性值）。 */
 const EDITABLE_SELECTOR = '[contenteditable="true"]'
 
-/** 本插件自有 DOM 的标记属性（与 turn-file-revert 的 `data-dsh-tfr` 同一约定）。 */
+/** 本插件自有 DOM 的标记属性（自有元素统一带一个 data-* 标记，便于排查/清理）。 */
 export const OVERLAY_MARKER_ATTRIBUTE = 'data-dsh-smart-list'
 
 /** 渲染层传入的会话标准 props 里，事件回调要读的最新值。 */

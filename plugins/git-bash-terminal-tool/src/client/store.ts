@@ -13,7 +13,7 @@
  * - **`/state` 不扫描**（宿主侧已改），所以设置项打开是瞬时的。
  */
 import { fetchCandidates, fetchState } from './api.js'
-import type { CandidateView, Dialect, StateView } from '../shared/protocol.js'
+import type { Dialect, StateView } from '../shared/protocol.js'
 import type { SettingsScopeLike } from './types.js'
 
 /** 本插件的设置值形状（与 host 的 `TerminalToolSettings` 一致）。 */
@@ -45,8 +45,6 @@ export interface RowState {
   /** capability：不支持时的原因。 */
   readonly supported: boolean
   readonly unsupportedReason?: string | undefined
-  /** 宿主 advertise 的沙箱模式（undefined = 不 confine）。 */
-  readonly shellSandboxMode?: string | undefined
   /** 正在扫描。 */
   readonly discovering: boolean
   /** 正在保存。 */
@@ -214,7 +212,6 @@ export function createRowController(
           settingsAvailable: state.settingsAvailable,
           supported: state.capability.supported,
           ...(state.capability.reason !== undefined ? { unsupportedReason: state.capability.reason } : {}),
-          ...(state.capability.shellSandboxMode !== undefined ? { shellSandboxMode: state.capability.shellSandboxMode } : {}),
           // host 快照只用于 settings 还没就绪时的兜底渲染，绝不覆盖用户刚做的选择。
           ...(settingsReady ? {} : { dialect: state.dialect, bashPath: state.bashPath }),
           status: state.platform === 'win32' ? 'ready' : 'hidden',
@@ -300,6 +297,3 @@ export function createRowController(
 
   return { store, start, setDialect, setBashPath, discover }
 }
-
-/** 行组件需要的候选视图类型（重新导出，避免组件直接依赖 protocol）。 */
-export type { CandidateView }

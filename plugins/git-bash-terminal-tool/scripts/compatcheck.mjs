@@ -26,8 +26,6 @@ const cacheRoot = join(here, '.compat-cache')
 
 let passed = 0
 let failed = 0
-/** 缺失时插件有降级路径的契约（只告警，不计入 failed）；当前契约集里没有可选契约。 */
-let optional = 0
 
 /** 一个断言。 */
 function check(name, condition, detail) {
@@ -90,8 +88,7 @@ const CONTRACTS = [
   {
     // ToolExecution 有 rootCallId，output 可声明 presentationMeta。
     // 本插件把两者都用于终端卡片（meta.cwd）与 PTC 后台任务的归属。
-    // ⚠️ 不是 0.2.1 才有的：0.2.0-rc.2 的 dsh-tools d.ts 与运行时已齐，0.2.1 只是继续保留，
-    // 所以按 0.2.0 起的**硬契约**查（0.2.0 与 0.2.1 两版都必须齐）。
+    // ⚠️ 0.2.0 起的**硬契约**（0.2.0 与 0.2.1 两版都必须齐）。
     id: 'dsh-tools：rootCallId + presentationMeta（0.2.0 起的执行/呈现契约）',
     pkg: 'dsh-tools',
     ext: ['.d.ts'],
@@ -184,7 +181,7 @@ const CONTRACTS = [
   },
   {
     // promote 能力（前台等超时后「转后台」）的硬契约：注册表必须齐 wait/read/kill/remove。
-    // 自 0.4.1 起最低支持 DSH 0.2.0；0.2.0-rc.2 的 dsh-jobs 产物已实测四者俱全，缺任一个即报红。
+    // 最低支持 DSH 0.2.0；0.2.0 的 dsh-jobs 产物已实测四者俱全，缺任一个即报红。
     // （插件运行期仍保留能力探测做防御式降级，但兼容闸门按硬契约查。）
     id: 'dsh-jobs：wait/read/kill/remove（前台超时转后台）',
     pkg: 'dsh-jobs',
@@ -208,7 +205,7 @@ function declaredEvents(text) {
   return [...text.matchAll(/^\s*'([a-z-]+\/[a-z-]+)'\(/gm)].map((match) => match[1])
 }
 
-/** 比较 DSH 版本（忽略 prerelease 后缀：0.2.1-rc.2 视为 0.2.1）。 */
+/** 比较 DSH 版本（忽略 `-<suffix>` 预发布后缀）。 */
 function versionAtLeast(version, minimum) {
   const parse = (value) => String(value).split('-')[0].split('.').map((part) => Number(part))
   const left = parse(version)
@@ -251,15 +248,6 @@ function checkTarget(label, root) {
     const unexpected = (contract.absent ?? []).filter((needle) => text.includes(needle))
     if (missing.length === 0 && unexpected.length === 0) {
       check(contract.id, true)
-    } else if (contract.optional === true) {
-      // 可选契约只用于「低于最低支持版本（0.2.0）的部署」的诊断性告警：缺失时插件有明确
-      // 降级路径，所以只告警、不计失败。当前契约集里没有可选契约（0.2.0 内必须全绿）。
-      optional += 1
-      const details = [
-        ...missing.map((m) => '缺 "' + m + '"'),
-        ...unexpected.map((m) => '不应出现 "' + m + '"'),
-      ]
-      console.log('  warn ' + contract.id + ' — ' + details.join('; ') + '（可选：插件会自动降级）')
     } else {
       const details = [
         ...missing.map((m) => '缺 "' + m + '"'),
@@ -287,7 +275,7 @@ function checkTarget(label, root) {
 function fetchVersion(version) {
   const dir = join(cacheRoot, version)
   const scope = join(dir, 'node_modules/@deepseek-ai')
-  // ⚠️ 先按版本筛契约，再据此决定要 pack 哪些包。否则 --fetch 0.2.0-rc.2 会去拉只在
+  // ⚠️ 先按版本筛契约，再据此决定要 pack 哪些包。否则 --fetch 0.2.0 会去拉只在
   // 0.2.1 才有的包（例如 dsh-working-directory / dsh-tool-pwsh），npm pack 直接 404 崩掉。
   const applicable = CONTRACTS.filter(
     (contract) => contract.since === undefined || versionAtLeast(version, contract.since),
@@ -335,5 +323,5 @@ if (argv[0] === '--fetch') {
 
 for (const entry of targets) checkTarget(entry[0], entry[1])
 
-console.log('\n' + passed + ' passed, ' + failed + ' failed' + (optional > 0 ? '（另有 ' + optional + ' 条可选契约缺失，已自动降级）' : ''))
+console.log('\n' + passed + ' passed, ' + failed + ' failed')
 if (failed > 0) process.exitCode = 1

@@ -32,7 +32,6 @@ export function injectStyles(): void {
   if (typeof document === 'undefined') return
   if (document.querySelector(`style[data-plugin-css=${JSON.stringify(STYLE_TAG_ID)}]`) !== null) return
   const tag = document.createElement('style')
-  tag.dataset.plugin = 'dsh-tweaks-git-bash-terminal-tool'
   tag.dataset.pluginCss = STYLE_TAG_ID
   tag.textContent = ROW_CSS
   document.head.appendChild(tag)
