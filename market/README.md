@@ -6,11 +6,12 @@
 
 ## 1. 这次要提交的东西
 
-**状态**：四个插件的条目**全部已合并进上游**——前三个（prompt-history / model-capabilities /
-turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/4862)；
+**状态**：插件市场当前收录本仓库 **3 个插件**（prompt-history / model-capabilities /
+git-bash-terminal-tool）——前两个于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/4862)；
 `git-bash-terminal-tool` 于 2026-09-18 经独立 PR
 [#5040](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/5040)（已 merge，见上游
 `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`）。
+`turn-file-revert` 已停维护（能力被 DSH 0.2.x 内置），其市场条目于 2026-10 下架移除。
 **因此日常发版（改代码 → 打 tag 走 CI，见 `AGENTS.md` §6）不需要再提 PR**：条目里没有版本字段，市场按
 `repository.url` + `repository.directory` 关联 npm，自动展示最新版本与下载量。
 只有**改条目元数据**（描述 / 分类）或**新增插件**才需要新开 PR。
@@ -20,10 +21,9 @@ turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-
 |---|---|
 | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` | `data/plugins/converk__dsh-tweaks--plugins-prompt-history.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` | `data/plugins/converk__dsh-tweaks--plugins-model-capabilities.yml` |
-| `data/plugins/converk__dsh-tweaks--plugins-turn-file-revert.yml` | `data/plugins/converk__dsh-tweaks--plugins-turn-file-revert.yml` |
 | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml` | `data/plugins/converk__dsh-tweaks--plugins-git-bash-terminal-tool.yml`（已合并；npm 现为 0.5.0） |
 
-一个 PR **最多 3 条**：前三个正好占满一个 PR，`git-bash-terminal-tool` 必须**另开一个独立 PR**（规范也建议"只提你愿意留下的那几个"）。
+一个 PR **最多 3 条**：现存 3 个条目可一次提交；以后若再新增插件导致超过 3 条，需拆成多个 PR（规范也建议"只提你愿意留下的那几个"）。
 
 ## 2. 前置条件（逐条核对）
 
@@ -32,7 +32,7 @@ turn-file-revert）于 2026-09-11 经 PR [#4862](https://github.com/awesome-dsh-
 | 每个 `package.json` 声明 `dsh.bundle` + 仓库根有 `cordis.patch.yml` | ✅ 三个都有 |
 | 仓库有真实可用代码 | ✅ |
 | 三个包声明 `files` / `repository` / `engines`，且不是 `private` | ✅ |
-| npm 包已发布 | ✅ 四个包均已上线（`dsh-tweaks-prompt-history` 0.1.1 / `-model-capabilities` 0.1.1 / `-turn-file-revert` 0.1.1（已停止维护，最后版本）/ `-git-bash-terminal-tool` 0.5.0；均需 DSH ≥ 0.2.0） |
+| npm 包已发布 | ✅ 四个 npm 包均已上线（`dsh-tweaks-prompt-history` 0.1.1 / `-model-capabilities` 0.1.1 / `-git-bash-terminal-tool` 0.5.0；`-turn-file-revert` 0.1.1 停维护最后版本、已从市场移除；市场收录的三个均需 DSH ≥ 0.2.0） |
 | 仓库加 `dsh-plugin` topic | ⬜ **待做**（GitHub 仓库页 → About 齿轮 → Topics） |
 | 仓库创建满 1 天 | ⏳ 首个提交是 2026-09-10 18:34，**2026-09-11 18:34 之后**提 PR 才会过 CI |
 | 描述与代码相符、无营销词 | ✅ 已按代码核对（描述里的能力/适配器都对得上） |
@@ -48,7 +48,7 @@ Copy-Item -Recurse -Force "<本仓库>\market\data" "awesome-dsh-plugin-fork\"
 cd awesome-dsh-plugin-fork
 git checkout -b add-converk-dsh-tweaks
 git add data/plugins/converk__dsh-tweaks--plugins-*.yml
-git commit -m "Add converk/dsh-tweaks plugins: prompt-history, model-capabilities, turn-file-revert"
+git commit -m "Add converk/dsh-tweaks plugins: prompt-history, model-capabilities, git-bash-terminal-tool"
 git push -u origin add-converk-dsh-tweaks
 ```
 
@@ -57,9 +57,24 @@ git push -u origin add-converk-dsh-tweaks
 
 > 不要手工编辑仓库里的 README——那两个 README 由 `data/plugins/*.yml` 生成，改了会被 CI 打回。
 
+### 删除条目（下架）
+
+已停维护 / 能力被官方内置的插件按下架处理（本仓库 `turn-file-revert` 于 2026-10 这样移除）：
+
+```powershell
+cd awesome-dsh-plugin-fork
+git fetch upstream main
+git checkout -B remove-<插件名> upstream/main
+git rm data/plugins/converk__dsh-tweaks--plugins-<插件名>.yml
+git commit -m "Remove retired <插件名> plugin from converk/dsh-tweaks"
+git push -u origin remove-<插件名>
+```
+
+然后在 GitHub 开 PR，说明停维护原因（能力已被官方内置）。下架**只删市场条目**：本仓库源码与 npm 包保留，已安装的用户不受影响。
+
 ## 4. 发布 npm 包（打 tag 走 CI，trusted publishing）
 
-**当前状态：四个包均已发布上线**（`git-bash-terminal-tool` 0.5.0、`model-capabilities` 0.1.1、`prompt-history` 0.1.1、`turn-file-revert` 0.1.1 停维护最后版本），本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
+**当前状态：四个 npm 包均已发布上线**（`git-bash-terminal-tool` 0.5.0、`model-capabilities` 0.1.1、`prompt-history` 0.1.1、`turn-file-revert` 0.1.1 停维护最后版本）；市场条目只保留前三个，本仓库的 `repository` 字段（含 `directory`）也已进入 registry 元数据，市场会自动关联。
 
 发布**不要本地 `npm publish`**，一律走 `.github/workflows/publish.yml`（npm trusted publishing / GitHub OIDC，无需 token，带 provenance）。每个包需在 npmjs.com 各配一次 trusted publisher（Provider GitHub Actions / Repository `converk/dsh-tweaks` / Workflow name `publish.yml` / Environment 留空 / Allowed actions npm publish）。发版步骤：
 
