@@ -27,9 +27,6 @@ const CSS = `
 .dshMc_wire{box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l4);height:28px;font:inherit;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:8px;padding:0 8px;font-size:13px;line-height:20px;min-width:0}
 .dshMc_wire:focus{border-color:var(--dsw-alias-brand-primary,var(--dsw-alias-border-l3));outline:none}
 .dshMc_wire:disabled{opacity:.5}
-.dshMc_radios{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.dshMc_radio{display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-primary);font-size:12px;line-height:18px;cursor:pointer}
-.dshMc_radio input{margin:0;accent-color:var(--dsw-alias-brand-primary,var(--dsw-alias-label-secondary))}
 .dshMc_hint{color:var(--dsw-alias-label-tertiary);margin:0;font-size:12px;line-height:18px}
 .dshMc_actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dshMc_button{box-sizing:border-box;height:28px;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer;background:transparent;border:.5px solid var(--dsw-alias-border-l3);border-radius:14px;display:inline-flex;align-items:center;gap:4px;padding:0 10px;font-size:12px;line-height:18px}

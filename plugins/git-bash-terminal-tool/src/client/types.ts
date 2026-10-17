@@ -3,8 +3,8 @@
  *
  * 与 host/types.ts 同样的纪律（AGENTS.md §3.1）：client bundle 只允许 `require`
  * 页面种子模块（`react` / `react/jsx-runtime`），所以这里不 import 任何
- * `@deepseek-ai/*` 类型包，只按真实契约的形状窄化。字段形状以本机 DSH
- * 0.1.5-rc.1 / 0.1.7-rc.2 部署的 `lib/types/client/**` 为准：
+ * `@deepseek-ai/*` 类型包，只按真实契约的形状窄化。字段形状以 DSH **0.2.1** 的
+ * 客户端 d.ts / 运行时产物为准：
  *
  * - `slots.inject/register`：`dsh-client-ui-slots/lib/types/client/index.d.ts`
  * - `settings.general.item` 的 owner props 为空：`dsh-client-ui-settings/lib/types/client/contract/slots.d.ts`
@@ -12,6 +12,8 @@
  *   0.1.7 起官方客户端**不再提供**该服务，改由家族兼容层
  *   `@linxin666/dsh-client-ui-web-ui-settings` 的 `webUiSettings` 提供。0.1.7 起
  *   namespace 必须是 **profile entry id**（原生表单按 entry id 定位）。
+ * - **0.2.1 起官方 `configForms` 的快照没有 `mode` 字段**（`host`/`memory` 持久化区分
+ *   已删除），只有家族兼容层还带它；所以 `mode` 必须按可选处理。
  * - `locale.register/bind`：`dsh-client-locale/lib/types/client/*.d.ts`
  */
 
@@ -52,7 +54,13 @@ export interface SettingsScopeSnapshotLike<T> {
   readonly user: unknown
   readonly revision: number | undefined
   readonly writable: boolean
-  readonly mode: 'host' | 'memory'
+  /**
+   * 持久化来源。
+   *
+   * ⚠️ DSH 0.2.1 的官方 `ConfigFormSnapshot` **已删除该字段**；家族兼容层
+   * `webUiSettings` 仍会给出 `'host' | 'memory'`。缺省按 `host` 处理。
+   */
+  readonly mode?: 'host' | 'memory' | undefined
 }
 
 /** 一个 namespace 的客户端 scope。 */

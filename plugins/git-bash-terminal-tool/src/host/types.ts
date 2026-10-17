@@ -2,18 +2,20 @@
  * 宿主侧 DSH 契约的**结构性窄化投影**。
  *
  * 本仓库规范（AGENTS.md §3.1）要求插件不引入对官方包的编译期/运行时依赖，
- * 因此这里只保留本插件真正读取的叶子字段。字段形状以官方 **DSH ≥ 0.1.7**（0.1.7-rc.2 与
- * 0.2.0-rc.1/rc.2 的 d.ts + 运行时源码都核对过；本插件最低支持 0.1.7）为准，
- * 可用 `node scripts/compatcheck.mjs --fetch <版本>` 复核：
+ * 因此这里只保留本插件真正读取的叶子字段。字段形状以 **DSH 0.2.1**（本插件最低支持
+ * 0.1.7；0.2.1 新增的字段一律按可选处理）为准，可用
+ * `node scripts/compatcheck.mjs --fetch <版本>` 复核：
  *
  * - `agent/created` / `Agent.ctx`（事件名常量在 `host/replace.ts`）：`dsh-agent/lib/types/runtime-types.d.ts`
  *   ⚠️ 0.1.5-rc.1 的 `agent/session-start` 自 0.1.6 起已被官方移除（issue #1），不要再写回去
- * - `tools.register` / `tools.restrict`：`dsh-tools/lib/types/index.d.ts`（`restrict` 实现见 `lib/index.js`）
- * - `systemPrompt.section`：`dsh-system-prompt/lib/types/index.d.ts`
+ * - `tools.register` / `tools.restrict`、`ToolExecution.rootCallId`、`output.presentationMeta`：
+ *   `dsh-tools/lib/types/index.d.ts`
+ * - `systemPrompt.section` / `getSectionOrder`：`dsh-system-prompt/lib/types/index.d.ts`
  * - `sandboxPolicy.resolve`：`dsh-sandbox-policy/lib/types/index.d.ts`
  * - `sandbox.confine`：`dsh-sandbox/lib/types/index.d.ts`
  * - `subprocess.spawn`：`dsh-subprocess/lib/types/{index,types}.d.ts`
- * - `jobs.start`：`dsh-jobs/lib/types/{index,types}.d.ts`
+ * - `jobs.start`（含 0.2.1 的 `toolCall`）：`dsh-jobs/lib/types/{index,types}.d.ts`
+ * - `workingDirectory.ensure`（0.2.1 的会话当前目录）：`dsh-working-directory/lib/types/index.d.ts`
  * - `shellEnv.collect`：`dsh-shell-env/lib/types/index.d.ts`
  * - `approval.request`：`dsh-user-approval/lib/types/index.d.ts`
  * - `connection.fetch.register`：`dsh-client-connection/lib/types/rpc.d.ts`
@@ -115,6 +117,12 @@ export interface ToolDefinitionLike {
   readonly output: {
     readonly schema: Record<string, unknown>
     readonly render: (args: unknown, value: unknown) => ContentBlockLike[]
+    /**
+     * 可重放的表现层元数据（DSH 0.2.1 起对 native 与嵌套调用都会计算并持久化到
+     * `tool/result.meta`）。终端卡片从 `meta.cwd` 读取「命令实际在哪个目录执行」，
+     * 没有它就只能退回会话原始工作区。
+     */
+    readonly presentationMeta?: ((args: unknown, value: unknown) => unknown) | undefined
   }
   execute(args: unknown, exec: ToolRunContextLike): Promise<unknown>
   presentCall?(args: unknown): unknown
@@ -132,6 +140,13 @@ export interface ToolResultLike {
 /** 一次工具执行（`ToolRunContext` 的窄化）。 */
 export interface ToolRunContextLike {
   readonly callId: string
+  /**
+   * 根调用 id（DSH 0.2.1 起 `ToolExecution.rootCallId` 必有）。
+   *
+   * PTC 的嵌套子调用有独立的 `callId`，但后台任务要归属到模型真正发起的那次根调用；
+   * 老版本没有该字段，退回 `callId`。
+   */
+  readonly rootCallId?: string | undefined
   readonly signal: AbortSignal
   readonly agent?: AgentLike | undefined
 }
@@ -231,6 +246,29 @@ export interface SandboxInfoLike {
   readonly denied: boolean
   readonly enforcement?: SandboxEnforcement | undefined
   readonly runnerFailed?: boolean | undefined
+}
+
+// ---------------------------------------------------------------------------
+// workingDirectory
+// ---------------------------------------------------------------------------
+
+/**
+ * 会话当前工作目录服务（DSH 0.2.1 新增，`@deepseek-ai/dsh-working-directory`）。
+ *
+ * ⚠️ `session.header.cwd` 是**不可变的原始项目目录**；用户/模型通过
+ * `working_directory` 工具 `cd` 之后，真正生效的是这个服务里的 projection。
+ * 终端工具必须用它，否则命令会继续跑在旧目录，而模型以为自己已经换了目录。
+ *
+ * 老版本 DSH 没有该服务：调用方用 `ctx.get` 判空后退回 header cwd。
+ */
+export interface WorkingDirectoryServiceLike {
+  /**
+   * 校验当前目录；目录消失时回退到原始项目。**async**，必须 await。
+   * @param agent - 会话所属 agent。
+   * @param signal - 取消信号。
+   * @returns 当前生效的绝对目录。
+   */
+  ensure(agent: object, signal?: AbortSignal): Promise<string>
 }
 
 // ---------------------------------------------------------------------------

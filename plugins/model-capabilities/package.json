@@ -1,7 +1,7 @@
 {
   "name": "dsh-tweaks-model-capabilities",
-  "description": "在 DSH 设置→模型的官方模型行里补上思考强度（llm-pi-ai）与多模态（llm-pi-ai / llm-deepseek），并提供 1M/128K 容量快捷填入",
-  "version": "0.1.0",
+  "description": "在 DSH 设置→模型的官方模型行补上非 declared pi-ai 的思考强度、DeepSeek 提供方级 thinking/reasoningEffort，以及 1M/128K 容量快捷",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -27,6 +27,7 @@
   },
   "files": [
     "lib",
+    "src",
     "cordis.patch.yml",
     "README.md"
   ],

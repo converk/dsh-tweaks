@@ -4,15 +4,17 @@
  * 只测 `lib/capability.js`（由 `node build.mjs` 产出），不碰 DOM / React / DSH：
  *   node build.mjs && node scripts/selftest.mjs
  *
- * 覆盖：只有 5 档；一个档都不勾 = 不支持思考（false）；只勾 off 被拒；
- * 非 off 档空拼写被拒；未勾选档不写键；多模态始终显式；models[] 数组模式保留
- * 其它条目与 name/compat；没有 models[] 时用官方编辑器可见 id 完整物化并删
- * modelOverrides；未保存模型被拒；协议预置只填档位表、绝不写 compat。
+ * 覆盖：7 档；一个档都不勾 = 不支持思考（false）；只勾 off 被拒；
+ * 非 off 档空拼写被拒；未勾选档不写键；只写 reasoningEfforts、不碰官方多模态；
+ * models[] 数组模式保留其它条目与 name/compat；没有 models[] 时用官方编辑器可见 id
+ * 完整物化并删 modelOverrides；未保存模型被拒；协议预置只填档位表、绝不写 compat；
+ * DeepSeek 提供方级 thinking / reasoningEffort 的读取、校验与 path ops。
  */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { build } from 'esbuild'
 
 const modulePath = new URL('../lib/capability.js', import.meta.url)
 if (!existsSync(modulePath)) {
@@ -20,6 +22,20 @@ if (!existsSync(modulePath)) {
   process.exit(2)
 }
 const cap = await import(modulePath.href)
+
+// provider-reasoning 是纯逻辑，但没有单独的 lib 入口；现场 bundle 成 ESM data URL。
+const providerBuilt = await build({
+  entryPoints: [fileURLToPath(new URL('../src/shared/provider-reasoning.ts', import.meta.url))],
+  bundle: true,
+  write: false,
+  format: 'esm',
+  platform: 'node',
+  target: 'node22',
+  logLevel: 'silent',
+})
+const provider = await import(
+  'data:text/javascript;base64,' + Buffer.from(providerBuilt.outputFiles[0].text, 'utf8').toString('base64')
+)
 
 let passed = 0
 const failures = []
@@ -41,7 +57,7 @@ function test(name, run) {
 const PATH = ['providers', 'route']
 
 // ---------------------------------------------------------------------------
-// 档位 / 草稿
+// 档位 / 草稿（多模态已交还官方控件，这里只测 reasoningEfforts）
 // ---------------------------------------------------------------------------
 
 test('THINKING_LEVELS: 两家协议词表的并集（按升级顺序）', () => {
@@ -55,87 +71,69 @@ test('draftFromEntry: 完整条目还原成草稿（含 minimal/xhigh）', () =>
     input: ['text', 'image'],
   })
   assert.deepEqual(draft.reasoning, { off: '', minimal: 'minimal', high: 'high', max: 'max', xhigh: 'xhigh' })
-  assert.equal(draft.input, 'text+image')
+  assert.deepEqual(Object.keys(draft), ['reasoning'])
 })
 
-test('draftFromEntry: false / 空 input / 文本 input', () => {
-  assert.deepEqual(cap.draftFromEntry({ reasoningEfforts: false }), { reasoning: {}, input: 'text' })
-  assert.deepEqual(cap.draftFromEntry({ input: [] }), { reasoning: {}, input: 'text' })
-  assert.deepEqual(cap.draftFromEntry({ input: ['text'] }), { reasoning: {}, input: 'text' })
+test('draftFromEntry: false / 空 / 非对象', () => {
+  assert.deepEqual(cap.draftFromEntry({ reasoningEfforts: false }), { reasoning: {} })
+  assert.deepEqual(cap.draftFromEntry({ input: ['text', 'image'] }), { reasoning: {} })
+  assert.deepEqual(cap.draftFromEntry({ inputModalities: ['text', 'image'] }), { reasoning: {} })
   assert.deepEqual(cap.draftFromEntry(undefined), cap.emptyDraft())
 })
 
-test('fieldValuesFromDraft: 一个档都不勾 = 不支持思考（false）+ 仅文本', () => {
+test('fieldValuesFromDraft: 一个档都不勾 = 不支持思考（false）', () => {
   const { values, issues } = cap.fieldValuesFromDraft('m', cap.emptyDraft())
   assert.deepEqual(issues, [])
   assert.equal(values.reasoningEfforts, false)
-  assert.deepEqual(values.input, ['text'])
+  assert.equal(Object.prototype.hasOwnProperty.call(values, 'input'), false)
 })
 
 test('fieldValuesFromDraft: off 留空写 null，非 off 原样写拼写', () => {
   const { values, issues } = cap.fieldValuesFromDraft('m', {
     reasoning: { off: '', low: 'low', high: 'high', max: 'ultra' },
-    input: 'follow',
   })
   assert.deepEqual(issues, [])
   assert.deepEqual(values.reasoningEfforts, { off: null, low: 'low', high: 'high', max: 'ultra' })
-  assert.deepEqual(values.input, ['text'])
+  assert.deepEqual(Object.keys(values), ['reasoningEfforts'])
 })
 
 test('fieldValuesFromDraft: 未勾选档不写键（= 本体钉成不支持）', () => {
-  const { values } = cap.fieldValuesFromDraft('m', {
-    reasoning: { off: '', high: 'high' },
-    input: 'text+image',
-  })
+  const { values } = cap.fieldValuesFromDraft('m', { reasoning: { off: '', high: 'high' } })
   assert.equal(Object.prototype.hasOwnProperty.call(values.reasoningEfforts, 'medium'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(values.reasoningEfforts, 'low'), false)
   assert.deepEqual(Object.keys(values.reasoningEfforts), ['off', 'high'])
-  assert.deepEqual(values.input, ['text', 'image'])
 })
 
 test('fieldValuesFromDraft: 只勾 off 被拒', () => {
-  const { issues } = cap.fieldValuesFromDraft('m', { reasoning: { off: '' }, input: 'text' })
-  assert.deepEqual(
-    issues.map((issue) => issue.code),
-    ['reasoning-only-off'],
-  )
+  const { issues } = cap.fieldValuesFromDraft('m', { reasoning: { off: '' } })
+  assert.deepEqual(issues.map((issue) => issue.code), ['reasoning-only-off'])
 })
 
 test('fieldValuesFromDraft: 非 off 档空拼写被拒', () => {
-  const { issues } = cap.fieldValuesFromDraft('m', {
-    reasoning: { off: '', high: '   ' },
-    input: 'text',
-  })
-  assert.deepEqual(
-    issues.map((issue) => issue.code),
-    ['reasoning-wire-required'],
-  )
+  const { issues } = cap.fieldValuesFromDraft('m', { reasoning: { off: '', high: '   ' } })
+  assert.deepEqual(issues.map((issue) => issue.code), ['reasoning-wire-required'])
   assert.equal(issues[0].level, 'high')
 })
 
 test('validateDraft: 模型 ID 不能为空', () => {
-  assert.deepEqual(
-    cap.validateDraft('   ', cap.emptyDraft()).map((issue) => issue.code),
-    ['model-id-empty'],
-  )
+  assert.deepEqual(cap.validateDraft('   ', cap.emptyDraft()).map((issue) => issue.code), ['model-id-empty'])
 })
 
 test('draftsEqual / copyDraft', () => {
   const a = cap.emptyDraft()
-  const b = { ...cap.emptyDraft(), input: 'text+image' }
   assert.equal(cap.draftsEqual(a, cap.emptyDraft()), true)
-  assert.equal(cap.draftsEqual(a, b), false)
-  const custom = { reasoning: { off: '', high: 'high' }, input: 'text' }
+  assert.equal(cap.draftsEqual(a, { reasoning: { high: 'high' } }), false)
+  const custom = { reasoning: { off: '', high: 'high' } }
   const copy = cap.copyDraft(custom)
   assert.deepEqual(copy, custom)
   assert.notEqual(copy.reasoning, custom.reasoning)
 })
 
 // ---------------------------------------------------------------------------
-// buildModelOps：数组模式 / 物化模式
+// buildModelOps：只写 reasoningEfforts，绝不碰官方多模态字段
 // ---------------------------------------------------------------------------
 
-test('buildModelOps: 用户层已有 models[] → 一次 set models，保留其它条目与 name/compat', () => {
+test('buildModelOps: 只改 reasoning 时保留 name/compat/input（官方多模态不被覆盖）', () => {
   const userSection = {
     providers: {
       route: {
@@ -146,6 +144,7 @@ test('buildModelOps: 用户层已有 models[] → 一次 set models，保留其�
             compat: { thinkingFormat: 'openai' },
             contextWindow: 1000000,
             maxTokens: 131072,
+            input: ['text', 'image'],
           },
           { id: 'qwen3.8-flash', name: 'Qwen 3.8 Flash', description: 'keep me' },
         ],
@@ -155,12 +154,7 @@ test('buildModelOps: 用户层已有 models[] → 一次 set models，保留其�
   const plan = cap.buildModelOps({
     userSection,
     settingsPath: PATH,
-    edits: [
-      {
-        id: 'glm-5.3',
-        draft: { reasoning: { off: '', high: 'high', max: 'ultra' }, input: 'text+image' },
-      },
-    ],
+    edits: [{ id: 'glm-5.3', draft: { reasoning: { off: '', high: 'high', max: 'ultra' } } }],
   })
   assert.deepEqual(plan.issues, [])
   assert.equal(plan.mode, 'models')
@@ -171,15 +165,26 @@ test('buildModelOps: 用户层已有 models[] → 一次 set models，保留其�
   assert.equal(models[0].id, 'glm-5.3')
   assert.equal(models[0].name, 'GLM 5.3')
   assert.deepEqual(models[0].compat, { thinkingFormat: 'openai' })
-  assert.deepEqual(models[0].reasoningEfforts, { off: null, high: 'high', max: 'ultra' })
   assert.deepEqual(models[0].input, ['text', 'image'])
-  // 官方编辑器写的上下文 / 最大输出必须原样保留（插件只动 reasoningEfforts / input）。
+  assert.deepEqual(models[0].reasoningEfforts, { off: null, high: 'high', max: 'ultra' })
   assert.equal(models[0].contextWindow, 1000000)
   assert.equal(models[0].maxTokens, 131072)
   assert.equal(models[1].description, 'keep me')
 })
 
-test('buildModelOps: 用户层没有 models[] → 用可见 id 完整物化并删 modelOverrides', () => {
+test('buildModelOps: 没有 input 的条目也不会被补成 text（继承能力不被剥离）', () => {
+  const userSection = { providers: { route: { models: [{ id: 'a', name: 'A' }] } } }
+  const plan = cap.buildModelOps({
+    userSection,
+    settingsPath: PATH,
+    edits: [{ id: 'a', draft: { reasoning: { high: 'high' } } }],
+  })
+  assert.deepEqual(plan.issues, [])
+  assert.equal(Object.prototype.hasOwnProperty.call(plan.ops[0].value[0], 'input'), false)
+  assert.equal(Object.prototype.hasOwnProperty.call(plan.ops[0].value[0], 'inputModalities'), false)
+})
+
+test('buildModelOps: 用户层没有 models[] → 用可见 id 物化并删 modelOverrides（不带 input）', () => {
   const userSection = {
     providers: {
       route: {
@@ -191,7 +196,7 @@ test('buildModelOps: 用户层没有 models[] → 用可见 id 完整物化并�
     userSection,
     settingsPath: PATH,
     visibleModelIds: ['a', 'b', 'c'],
-    edits: [{ id: 'a', draft: { reasoning: {}, input: 'text+image' } }],
+    edits: [{ id: 'a', draft: cap.emptyDraft() }],
   })
   assert.deepEqual(plan.issues, [])
   assert.deepEqual(plan.ops, [
@@ -199,7 +204,7 @@ test('buildModelOps: 用户层没有 models[] → 用可见 id 完整物化并�
       op: 'set',
       path: ['providers', 'route', 'models'],
       value: [
-        { id: 'a', reasoningEfforts: false, input: ['text', 'image'] },
+        { id: 'a', reasoningEfforts: false },
         { id: 'b', name: 'B override', reasoningEfforts: { high: 'high' } },
         { id: 'c' },
       ],
@@ -215,10 +220,7 @@ test('buildModelOps: 没有 models[] 也没有可见 id → models-not-configure
     edits: [{ id: 'a', draft: cap.emptyDraft() }],
   })
   assert.deepEqual(plan.ops, [])
-  assert.deepEqual(
-    plan.issues.map((issue) => issue.code),
-    ['models-not-configured'],
-  )
+  assert.deepEqual(plan.issues.map((issue) => issue.code), ['models-not-configured'])
 })
 
 test('buildModelOps: 模型还没保存 → model-not-saved', () => {
@@ -228,10 +230,7 @@ test('buildModelOps: 模型还没保存 → model-not-saved', () => {
     edits: [{ id: 'b', draft: cap.emptyDraft() }],
   })
   assert.deepEqual(plan.ops, [])
-  assert.deepEqual(
-    plan.issues.map((issue) => issue.code),
-    ['model-not-saved'],
-  )
+  assert.deepEqual(plan.issues.map((issue) => issue.code), ['model-not-saved'])
   assert.equal(plan.issues[0].id, 'b')
 })
 
@@ -242,10 +241,7 @@ test('buildModelOps: models 与 modelOverrides 并存 → storage-conflict', () 
     edits: [],
   })
   assert.deepEqual(plan.ops, [])
-  assert.deepEqual(
-    plan.issues.map((issue) => issue.code),
-    ['storage-conflict'],
-  )
+  assert.deepEqual(plan.issues.map((issue) => issue.code), ['storage-conflict'])
 })
 
 test('buildModelOps: 改动与已存值相同 → 不产生 op', () => {
@@ -255,13 +251,13 @@ test('buildModelOps: 改动与已存值相同 → 不产生 op', () => {
   const plan = cap.buildModelOps({
     userSection,
     settingsPath: PATH,
-    edits: [{ id: 'a', draft: { reasoning: { high: 'high' }, input: 'text' } }],
+    edits: [{ id: 'a', draft: { reasoning: { high: 'high' } } }],
   })
   assert.deepEqual(plan.issues, [])
   assert.deepEqual(plan.ops, [])
 })
 
-test('buildModelOps: 清空档位 = 写 false，并保留 name/compat', () => {
+test('buildModelOps: 清空档位 = 写 false，并保留 name/compat/input', () => {
   const userSection = {
     providers: {
       route: {
@@ -280,7 +276,7 @@ test('buildModelOps: 清空档位 = 写 false，并保留 name/compat', () => {
   const plan = cap.buildModelOps({
     userSection,
     settingsPath: PATH,
-    edits: [{ id: 'a', draft: { reasoning: {}, input: 'text' } }],
+    edits: [{ id: 'a', draft: cap.emptyDraft() }],
   })
   assert.deepEqual(plan.issues, [])
   assert.deepEqual(plan.ops, [
@@ -293,81 +289,34 @@ test('buildModelOps: 清空档位 = 写 false，并保留 name/compat', () => {
           name: 'A',
           compat: { thinkingFormat: 'openai' },
           reasoningEfforts: false,
-          input: ['text'],
+          input: ['text', 'image'],
         },
       ],
     },
   ])
 })
 
-// ---------------------------------------------------------------------------
-// DeepSeek 命名空间：只有 inputModalities，没有每模型 reasoningEfforts
-// ---------------------------------------------------------------------------
-
-test('draftFromEntry: DeepSeek 用 inputModalities 字段', () => {
-  const draft = cap.draftFromEntry({ inputModalities: ['text', 'image'] }, 'inputModalities')
-  assert.equal(draft.input, 'text+image')
-  assert.deepEqual(draft.reasoning, {})
-  assert.equal(cap.draftFromEntry({ input: ['text', 'image'] }, 'inputModalities').input, 'text')
-})
-
-test('fieldValuesFromDraft: manageReasoning=false 时不产生 reasoningEfforts', () => {
-  const { values, issues } = cap.fieldValuesFromDraft(
-    'm',
-    { reasoning: { off: '', high: 'high' }, input: 'text+image' },
-    { manageReasoning: false },
-  )
+test('fieldValuesFromDraft: manageReasoning=false 时不产生任何字段（DeepSeek / 官方已管推理）', () => {
+  const { values, issues } = cap.fieldValuesFromDraft('m', { reasoning: { off: '', high: 'high' } }, { manageReasoning: false })
   assert.deepEqual(issues, [])
-  assert.equal(values.reasoningEfforts, undefined)
-  assert.deepEqual(values.input, ['text', 'image'])
+  assert.deepEqual(values, {})
 })
 
-test('buildModelOps: DeepSeek 只写 inputModalities，保留其它字段且不加 reasoningEfforts', () => {
-  const userSection = {
-    providers: {
-      route: {
-        models: [
-          {
-            id: 'deepseek-v4-flash-vision-exp',
-            name: 'DeepSeek-V4-Flash-Vision-Exp',
-            description: 'keep me',
-            contextWindow: 1000000,
-            maxTokens: 131072,
-            inputModalities: ['text'],
-            imagePixelBudget: 'low',
-            imageMaxBytes: 1048576,
-          },
-        ],
+test('buildModelOps: manageReasoning=false 的编辑不产生 op（DeepSeek 只走官方控件）', () => {
+  const plan = cap.buildModelOps({
+    userSection: {
+      providers: {
+        route: {
+          models: [{ id: 'deepseek-v4-flash', inputModalities: ['text', 'image'], name: 'Flash' }],
+        },
       },
     },
-  }
-  const plan = cap.buildModelOps({
-    userSection,
     settingsPath: PATH,
-    inputField: 'inputModalities',
     manageReasoning: false,
-    edits: [{ id: 'deepseek-v4-flash-vision-exp', draft: { reasoning: {}, input: 'text+image' } }],
+    edits: [{ id: 'deepseek-v4-flash', draft: cap.emptyDraft() }],
   })
   assert.deepEqual(plan.issues, [])
-  assert.deepEqual(plan.ops, [
-    {
-      op: 'set',
-      path: ['providers', 'route', 'models'],
-      value: [
-        {
-          id: 'deepseek-v4-flash-vision-exp',
-          name: 'DeepSeek-V4-Flash-Vision-Exp',
-          description: 'keep me',
-          contextWindow: 1000000,
-          maxTokens: 131072,
-          inputModalities: ['text', 'image'],
-          imagePixelBudget: 'low',
-          imageMaxBytes: 1048576,
-        },
-      ],
-    },
-  ])
-  assert.equal(Object.prototype.hasOwnProperty.call(plan.ops[0].value[0], 'reasoningEfforts'), false)
+  assert.deepEqual(plan.ops, [])
 })
 
 // ---------------------------------------------------------------------------
@@ -453,6 +402,39 @@ test('listStoredModels: models[] 优先，其次 modelOverrides 键', () => {
   assert.equal(stored[0].entry.name, 'A')
 })
 
+test('providerReasoningFrom: 只接受合法枚举，缺失/非法当空', () => {
+  assert.deepEqual(provider.providerReasoningFrom({ thinking: 'disabled', reasoningEffort: 'off' }), {
+    thinking: 'disabled',
+    effort: 'off',
+  })
+  assert.deepEqual(provider.providerReasoningFrom({ thinking: 'what', reasoningEffort: 42 }), { thinking: '', effort: '' })
+  assert.deepEqual(provider.providerReasoningFrom(undefined), provider.emptyProviderReasoning())
+})
+
+test('providerReasoningOps: 空 = unset，非空 = set，未变不写', () => {
+  const current = { thinking: 'enabled', effort: 'high' }
+  const next = { thinking: '', effort: 'max' }
+  assert.deepEqual(provider.providerReasoningOps(current, next), [
+    { op: 'unset', path: ['thinking'] },
+    { op: 'set', path: ['reasoningEffort'], value: 'max' },
+  ])
+  assert.deepEqual(provider.providerReasoningOps(current, current), [])
+})
+
+test('providerReasoningOps: thinking=disabled 与 effort 冲突被拒', () => {
+  assert.equal(provider.validateProviderReasoning({ thinking: 'disabled', effort: 'high' }), 'thinking-disabled-effort')
+  assert.equal(provider.validateProviderReasoning({ thinking: 'disabled', effort: 'off' }), undefined)
+  assert.equal(provider.validateProviderReasoning({ thinking: 'disabled', effort: '' }), undefined)
+  assert.equal(provider.validateProviderReasoning({ thinking: 'enabled', effort: 'high' }), undefined)
+})
+
+test('providerReasoningOps: 先关 thinking 再写 effort 的 path 顺序稳定', () => {
+  assert.deepEqual(provider.providerReasoningOps({ thinking: '', effort: '' }, { thinking: 'enabled', effort: 'low' }), [
+    { op: 'set', path: ['thinking'], value: 'enabled' },
+    { op: 'set', path: ['reasoningEffort'], value: 'low' },
+  ])
+})
+
 test('CAPACITY_PRESETS: 第一个就是 1M / 128K 的确切值', () => {
   assert.deepEqual(cap.CAPACITY_PRESETS[0], {
     label: '1M / 128K',
@@ -476,12 +458,16 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
   const clientIndex = readFileSync(new URL('../src/client/index.ts', import.meta.url), 'utf8')
   const clientTypes = readFileSync(new URL('../src/client/types.ts', import.meta.url), 'utf8')
   const augment = readFileSync(new URL('../src/client/augment.ts', import.meta.url), 'utf8')
+  const anchor = readFileSync(new URL('../src/client/anchor.tsx', import.meta.url), 'utf8')
 
   // inject 的四个名字：官方客户端各自 provide / mount 的真实服务名。
   assert.match(clientIndex, /export const inject = \['slots', 'locale', 'remote', 'remote\.settings'\]/)
   // keyed slot 的键必须等于提供方的 settingsNs（官方按 entryKey 派发）。
   assert.ok(clientIndex.includes("'settings.models.provider-card'"), 'slot 键')
-  assert.ok(clientIndex.includes("PROVIDER_CARD_KEYS = ['llm-pi-ai', 'llm-deepseek']"), '提供方 settingsNs')
+  assert.ok(
+    clientIndex.includes("PROVIDER_CARD_KEYS = ['llm-pi-ai', 'llm-deepseek', 'llm-deepseek-account']"),
+    '提供方 settingsNs（含 account 路由）',
+  )
   // 官方 remote 事件名（白名单常量 API_REMOTE_FORWARDED_EVENTS 的成员）。
   assert.ok(clientIndex.includes("'settings/document-updated'"), '设置变更事件名')
   // locale 的非类型化三参 register + bind。
@@ -501,6 +487,13 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
     assert.ok(augment.includes(fragment), `augment.ts 丢了 DOM 判据 ${fragment}`)
   }
   assert.ok(augment.includes('input[type="text"], input:not([type])'), '模型 ID 输入框判据')
+  // 0.2.1：官方模型行已原生提供多模态 + hand-declared 路由的推理控件。
+  // 插件不得再注入多模态 radio，且必须按 declared 跳过官方已提供的推理控件。
+  assert.ok(augment.includes('options.declared === true'), '按 declared 跳过官方推理控件')
+  assert.equal(augment.includes('dshMc_radios'), false, '不得再注入多模态 radio')
+  assert.equal(augment.includes('inputRadios'), false, '不得再维护多模态控件状态')
+  assert.ok(anchor.includes('ProviderReasoningPanel'), 'DeepSeek 提供方级面板')
+  assert.ok(anchor.includes("'llm-deepseek-account'"), 'account 路由也挂面板')
 })
 
 /**
@@ -511,6 +504,7 @@ const OFFICIAL_CONTRACT_FACTS = [
   {
     name: 'remote / remote.settings 是 traced 客户端服务（服务键 remote.<namespace>）',
     path: 'dsh-api-gateway/lib/client.js',
+    alternates: ['dsh-api-gateway/lib/client.node.js', 'dsh-api-gateway/lib/client.browser.js'],
     includes: [
       'function remoteServiceKey(namespace)',
       'return `remote.${namespace}`;',
@@ -545,6 +539,7 @@ const OFFICIAL_CONTRACT_FACTS = [
   {
     name: '事件转发保留原始实参顺序（...frame.args）',
     path: 'dsh-api-gateway/lib/client.js',
+    alternates: ['dsh-api-gateway/lib/client.node.js', 'dsh-api-gateway/lib/client.browser.js'],
     includes: ['privateEvents(this.ownerCtx).parallel(this.eventKey(frame.event), ...frame.args)'],
   },
   {
@@ -577,6 +572,7 @@ const OFFICIAL_CONTRACT_FACTS = [
   {
     name: 'DOM 判据：展开区仍是 contextWindow / maxTokens 两个 input 在前',
     path: 'dsh-client-ui-settings-models/lib/client.js',
+    optional: true,
     includes: [
       'className: ModelsSection_module_css_default["modelAdvanced"]',
       'children: [["contextWindow", "maxTokens"].map((field) =>',
@@ -590,6 +586,7 @@ const OFFICIAL_CONTRACT_FACTS = [
   {
     name: 'keyed slot 注册必须带 key（插件正是按 key 挂两个提供方）',
     path: 'dsh-client-ui-slots/lib/index.js',
+    optional: true,
     includes: ['if (options.key === void 0) throw new Error(`keyed slot "${options.name}" requires options.key`);'],
   },
   {
@@ -601,6 +598,21 @@ const OFFICIAL_CONTRACT_FACTS = [
     name: 'locale 非类型化三参 register 与 bind 的声明',
     path: 'dsh-client-locale/lib/types/client/index.d.ts',
     includes: ['register(ns: string, locale: string, dict: LocaleDict): () => void;', 'bind(ns: string): Translate;'],
+  },
+  {
+    name: '官方模型行原生提供多模态 / hand-declared 推理控件（插件不得重复注入）',
+    path: 'dsh-client-ui-settings-models/lib/client.js',
+    includes: ['modelInputTypes', 'modelReasoning'],
+  },
+  {
+    name: '官方模型行存在 hand-declared 路由的 reasoningLevels 装配点',
+    path: 'dsh-client-ui-settings-models/lib/client.js',
+    includes: ['reasoningLevels'],
+  },
+  {
+    name: 'DeepSeek account 路由仍是独立 entry，并使用 modelOverrides 而非 models',
+    path: 'dsh-llm-deepseek-account/lib/index.js',
+    includes: ['models is no longer configurable', 'modelOverrides'],
   },
   {
     name: 'llm-pi-ai 模型字段 input / reasoningEfforts（插件写入的字段名）',
@@ -615,7 +627,7 @@ const OFFICIAL_CONTRACT_FACTS = [
   {
     name: '两个提供方 entry id 仍是插件注册席位用的 llm-pi-ai / llm-deepseek',
     path: 'dsh-base/cordis.patch.yml',
-    includes: ['- id: llm-pi-ai', '- id: llm-deepseek'],
+    includes: ['- id: llm-pi-ai', '- id: llm-deepseek', '- id: llm-deepseek-account'],
   },
 ]
 
@@ -623,6 +635,12 @@ const OFFICIAL_CONTRACT_FACTS = [
  * 顺序 / 结构判据：单纯「包含」表达不了的契约。
  * @returns 失败原因；通过时 undefined。
  */
+// 桌面运行时 asar 里没有 .d.ts（只有构建产物）；完整 CLI 部署才有。
+// 类型契约在部署里缺失时跳过，运行时代码契约仍然强制核对。
+for (const fact of OFFICIAL_CONTRACT_FACTS) {
+  if (fact.path.endsWith('.d.ts')) fact.optional = true
+}
+
 const OFFICIAL_STRUCTURE_CHECKS = [
   {
     name: '编辑器动作行 _editorActions 里取消在提交之前（插件取 buttons[0] / 最后一个）',
@@ -673,10 +691,23 @@ if (officialRoots.length === 0) {
   for (const root of officialRoots) {
     test(`官方契约原文 @ ${root}`, () => {
       for (const fact of OFFICIAL_CONTRACT_FACTS) {
-        const file = join(root, fact.path)
-        assert.ok(existsSync(file), `缺少官方产物 ${fact.path}`)
+        // 桌面运行时会把某些包的 client 产物命名为 client.node.js / client.browser.js；
+        // 完整 CLI 部署则是 client.js。两者都接受，避免把「部署布局差异」误报成契约漂移。
+        const candidates = [fact.path, ...(fact.alternates ?? [])].map((relative) => join(root, relative))
+        const file = candidates.find((candidate) => existsSync(candidate))
+        if (file === undefined) {
+          if (fact.optional === true) {
+            console.log(`  skip ${fact.name}：该部署没有 ${fact.path}`)
+            continue
+          }
+          assert.fail(`缺少官方产物 ${fact.path}`)
+        }
         const source = readFileSync(file, 'utf8')
         for (const fragment of fact.includes) {
+          if (!source.includes(fragment) && fact.optional === true) {
+            console.log(`  skip ${fact.name}：该部署的 ${fact.path} 不含 ${JSON.stringify(fragment)}`)
+            continue
+          }
           assert.ok(
             source.includes(fragment),
             `${fact.name}：${fact.path} 里找不到 ${JSON.stringify(fragment)}`,

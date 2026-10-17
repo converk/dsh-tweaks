@@ -332,11 +332,11 @@ function makeApplyCtx(names) {
   check('服务到位后补登记席位', late.registered.length === 1, String(late.registered.length))
 }
 {
-  // 普通 0.1.7 部署：没有家族兼容层，只有官方原生 configForms。
+  // 普通 0.2.1 部署：没有家族兼容层，只有官方原生 configForms（快照无 mode 字段）。
   const registered = []
   const gotEntryIds = []
   const nativeForm = {
-    getSnapshot: () => ({ status: 'ready', value: { dialect: 'bash', bashPath: 'D:/x/bash.exe', bashCandidates: [] }, base: undefined, user: undefined, revision: 1, writable: true, mode: 'host' }),
+    getSnapshot: () => ({ status: 'ready', value: { dialect: 'bash', bashPath: 'D:/x/bash.exe', bashCandidates: [] }, base: undefined, user: undefined, revision: 1, writable: true }),
     subscribe: () => () => undefined,
     mutate: async () => true,
     set: async () => true,
@@ -387,14 +387,17 @@ section('行组件：渲染闸门与路径栏时机')
  * @param settings - 假的设置值；不给就模拟 scope 还没就绪（走 host 快照）。
  * @returns 展平后的元素树。
  */
-async function renderRow(state, settings) {
+async function renderRow(state, settings, mode = 'host', failState = false) {
   memoCache = null
   let wrapper
-  const factory = loadFactory(async (url) => ({
-    ok: true,
-    status: 200,
-    json: async () => (String(url).includes('/state') ? state : { candidates: [] }),
-  }))
+  const factory = loadFactory(async (url) => {
+    if (failState && String(url).includes('/state')) throw new Error('HTTP 500')
+    return {
+      ok: true,
+      status: 200,
+      json: async () => (String(url).includes('/state') ? state : { candidates: [] }),
+    }
+  })
   factory.factory(factoryRequire).apply({
     get: (name) =>
       name === 'slots'
@@ -417,7 +420,8 @@ async function renderRow(state, settings) {
                     user: undefined,
                     revision: 1,
                     writable: true,
-                    mode: 'host',
+                    // `mode: null` 模拟 DSH 0.2.1 的官方 configForms：快照里没有 mode 字段。
+                    ...(mode === null ? {} : { mode }),
                   }),
                   subscribe: () => () => undefined,
                   mutate: async () => undefined,
@@ -497,6 +501,19 @@ const loadingTree = await renderRow({
 })
 check('平台未知（加载中）渲染 null', loadingTree === null, JSON.stringify(loadingTree))
 
+// 回归：首次 /state 失败不能把设置行永久留在 loading（用户只能重挂载页面才看得到行）。
+const failedStateTree = await renderRow(
+  { platform: '', dialect: 'pwsh', bashPath: '', settingsAvailable: false, capability: { supported: false } },
+  { dialect: 'pwsh', bashPath: '', bashCandidates: [] },
+  'host',
+  true,
+)
+check(
+  '首次 /state 失败仍渲染设置行并显示错误',
+  failedStateTree !== null && JSON.stringify(failedStateTree).includes('HTTP 500'),
+  JSON.stringify(failedStateTree),
+)
+
 // 需求 1 + 3：默认（pwsh）只有两个可点的工具选项，没有路径栏、没有自动发现按钮。
 const pwshTree = await renderRow(
   { platform: 'win32', dialect: 'pwsh', bashPath: '', settingsAvailable: true, capability: { supported: true } },
@@ -553,6 +570,32 @@ check(
 )
 const options = collect(selects[0], 'option')
 check('下拉列表列出两条持久化路径', options.length === 2, String(options.length))
+
+// DSH 0.2.1：官方 configForms 的快照删掉了 `mode` 字段；缺省必须视为 host 可写。
+// 回归：早先写成 `snapshot.mode === 'host'`，升级到 0.2.1 后整行控件全变灰。
+const noModeTree = await renderRow(
+  { platform: 'win32', dialect: 'pwsh', bashPath: '', settingsAvailable: true, capability: { supported: true } },
+  { dialect: 'pwsh', bashPath: '', bashCandidates: [] },
+  null,
+)
+const noModeButtons = collect(noModeTree, 'button')
+check(
+  '0.2.1 官方 configForms（快照无 mode）仍可写',
+  noModeButtons.length === 2 && noModeButtons.every((button) => button.props.disabled === false),
+  JSON.stringify(noModeButtons.map((button) => button.props.disabled)),
+)
+
+const memoryTree = await renderRow(
+  { platform: 'win32', dialect: 'pwsh', bashPath: '', settingsAvailable: true, capability: { supported: true } },
+  { dialect: 'pwsh', bashPath: '', bashCandidates: [] },
+  'memory',
+)
+const memoryButtons = collect(memoryTree, 'button')
+check(
+  '家族兼容层的 memory 模式仍不可写',
+  memoryButtons.length === 2 && memoryButtons.every((button) => button.props.disabled === true),
+  JSON.stringify(memoryButtons.map((button) => button.props.disabled)),
+)
 
 check('组件渲染只 require react 种子模块', requested.every((id) => id === 'react' || id === 'react/jsx-runtime'))
 

@@ -45,6 +45,8 @@ export {
   parseBashArgs,
   composePath,
   composeEnv,
+  canonicalPath,
+  resolveWorkdir,
   ENV_OVERRIDES,
   WINDOWS_ENV_DEFAULTS,
   bashPathEntries,

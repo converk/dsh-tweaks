@@ -6,13 +6,16 @@
  * （设计文档明确禁止）。所以这里按契约手写 `ToolDefinition`：
  *
  * - `parameters` 用**原始 JSON Schema**（`ToolSchema.parameters: Record<string, unknown>`，
- *   `register` 只对 `output.schema` 跑 `assertSupportedJsonSchema`，见 `dsh-tools/lib/index.js:2773`）；
+ *   `register` 只对 `output.schema` 跑 `assertSupportedJsonSchema`，见 `dsh-tools/lib/index.js`）；
  *   形状与官方 `defineTool` 编译出来的 JSON Schema 一致。
- * - `output.schema` 与官方**同形**（`oneOf`: background / foreground），所以 UI 的
- *   terminal 卡片与退出码 pill 表现一致；`render` 逐字复刻官方 `renderResult`。
+ * - `output.schema` 与官方**同形**（`oneOf`: background / promoted / foreground，三个分支都带
+ *   `cwd`），所以 UI 的 terminal 卡片与退出码 pill 表现一致；`render` 逐字复刻官方
+ *   `renderResult`，`presentationMeta` 把实际执行目录写进 `tool/result.meta`。
  * - `execute` 自己实现子进程执行：`argv = [bashPath, '-c', command]`；受限模式走
  *   `ctx.sandbox.confine`（Windows 的 ACL 后端是 argv 前缀 runner，与 shell 无关），
  *   未受限（`danger-full-access`）完全不走 confine —— 与 `dsh-pwsh-sandbox` 的口径一致。
+ * - 默认 cwd 取 `ctx.workingDirectory.ensure()`（DSH 0.2.1；模型用 `working_directory`
+ *   工具 cd 之后必须跟随），老版本退回 `session.header.cwd`。
  * - 环境注入 `TERM=dumb` / `NO_COLOR=1` / `PAGER=cat` / `GIT_PAGER=cat`
  *   （与 `dsh-bash-local` 的 `ENV_OVERRIDES` 一致），并把 Git/Bash 自己的目录补进 `PATH`。
  */
@@ -40,6 +43,7 @@ import type {
   ToolDefinitionLike,
   ToolResultLike,
   ToolRunContextLike,
+  WorkingDirectoryServiceLike,
 } from './types.js'
 
 /** 前台/后台单流的内存保留上限（对齐 `dsh-bash-local` 的 `maxOutputBytes`）。 */
@@ -102,6 +106,8 @@ export interface BashToolArgs {
 /** 前台规范值（与官方 `output.schema` 的 foreground 分支同形）。 */
 export interface ForegroundValue {
   readonly kind: 'foreground'
+  /** 命令实际执行的目录（DSH 0.2.1 起官方三个分支都带；终端卡片读它显示 cwd）。 */
+  readonly cwd: string
   readonly exitCode: number | null
   readonly signal: string | null
   readonly timedOut: boolean
@@ -118,6 +124,7 @@ export interface ForegroundValue {
 export interface BackgroundValue {
   readonly kind: 'background'
   readonly jobId: string
+  readonly cwd: string
 }
 
 /**
@@ -130,6 +137,7 @@ export interface BackgroundValue {
 export interface PromotedValue {
   readonly kind: 'promoted'
   readonly jobId: string
+  readonly cwd: string
   readonly timeoutMs: number
   readonly output: string
 }
@@ -185,6 +193,11 @@ export interface BashJobsLike {
     label: string
     /** ⚠️ 必须是 **agent id（即 session id）字符串**，不是 agent 对象：注册表拿它去 `agents.get()` 找活着的 agent。 */
     owner?: string | undefined
+    /**
+     * 创建该任务的工具调用（DSH 0.2.1 新增，写入 `job/registered` / `job/settled`
+     * 会话事件）。PTC 子调用的 `callId` 不是根调用，必须同时给 `rootCallId`。
+     */
+    toolCall?: { readonly callId: string; readonly rootCallId: string } | undefined
     /** 输出拉取源：注册表按它把 stdout/stderr 泵进任务的输出环，`job_output` 读的就是这个环。 */
     output?: readonly BashJobSourceLike[] | undefined
     run(): {
@@ -223,6 +236,13 @@ export interface BashToolRuntime {
     | undefined
   /** `ctx.jobs`（`run_in_background` 时必需）。 */
   readonly jobs?: BashJobsLike | undefined
+  /**
+   * `ctx.workingDirectory`（DSH 0.2.1 新增；老版本没有，退回 `session.header.cwd`）。
+   *
+   * ⚠️ `session.header.cwd` 是**不可变的原始项目目录**。模型用 `working_directory`
+   * 工具 `cd` 之后，真正生效的是该服务里的 projection —— 不看它，命令会继续跑在旧目录。
+   */
+  readonly workingDirectory?: WorkingDirectoryServiceLike | undefined
   /** `ctx.shellEnv`（可选：拿得到就注入受管 `DSH_*`）。 */
   readonly shellEnv?: { collect(execution: { agent?: object }): Readonly<Record<string, string>> } | undefined
   /** `ctx.approval`（沙箱升级时必需）。 */
@@ -462,9 +482,14 @@ export function parseBashArgs(args: unknown, backgroundEnabled: boolean, escalat
  * 构造工具描述文本（口径与官方 `bashDescription` 一致，但明确是 Git Bash 方言）。
  * @param backgroundEnabled - 是否暴露 `run_in_background`。
  * @param escalationModes - advertise 的升级目标。
+ * @param workingDirectory - 本部署是否有会变的「会话当前目录」（0.2.1+）。
  * @returns 模型可见的工具描述。
  */
-export function bashDescription(backgroundEnabled: boolean, escalationModes: readonly SandboxMode[]): string {
+export function bashDescription(
+  backgroundEnabled: boolean,
+  escalationModes: readonly SandboxMode[],
+  workingDirectory = false,
+): string {
   const background = backgroundEnabled
     ? 'Set `run_in_background: true` for long-running commands: the call returns a job id immediately; read its output with `job_output` and stop it with `job_kill`.'
     : 'Background execution is not available; long-running commands must finish within the timeout.'
@@ -472,9 +497,11 @@ export function bashDescription(backgroundEnabled: boolean, escalationModes: rea
     'Execute a command in Git Bash (`bash -c` on Windows) and return its stdout/stderr. ' +
     'The shell is POSIX: use forward slashes and `$VAR`; a Windows path such as C:/work is accepted as-is, and /c/work reaches the same place when a POSIX spelling is required. ' +
     'Each call runs in a fresh shell: no state (cwd, variables, functions) persists between calls — pass `workdir` instead of using `cd`. ' +
+    (workingDirectory ? 'The session current working directory (see the `working_directory` tool) is the default for every call. ' : '') +
     'Non-zero exits are reported as `[exit code: N]`. Current harness environment facts are exposed through managed `$DSH_*` variables; inspect them when needed. ' +
     'Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]` — a policy denial, not a bug in the command; do not retry another way. ' +
     'Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. ' +
+    'Provide `description` before `command` in the arguments. ' +
     background
   if (escalationModes.length === 0) return base
   return (
@@ -513,12 +540,12 @@ export function bashParameters(
   promote = false,
 ): Record<string, unknown> {
   const properties: Record<string, unknown> = {
-    command: { type: 'string', description: 'The bash command to execute.' },
     description: {
       type: 'string',
       description:
-        'Clear, concise description of what this command does in active voice, 5-10 words (shown in the UI). Examples: "ls" -> "List files in current directory"; "git status" -> "Show working tree status"; "npm install" -> "Install package dependencies".',
+        'Clear, concise description of what this command does in active voice, 5-10 words (shown in the UI). Examples: "ls" → "List files in current directory"; "git status" → "Show working tree status"; "npm install" → "Install package dependencies".',
     },
+    command: { type: 'string', description: 'The bash command to execute.' },
     timeoutMs: {
       type: 'number',
       description: promote
@@ -528,7 +555,7 @@ export function bashParameters(
     workdir: {
       type: 'string',
       description:
-        'Working directory for this command. Defaults to the session workspace; a relative path is resolved against it.',
+        'Working directory for this command. Defaults to the session current working directory; a relative path is resolved against it.',
     },
   }
   if (backgroundEnabled) {
@@ -560,11 +587,14 @@ export function bashParameters(
  * 与 `bashParameters` 同样的纪律：`required` 一律是**对象节点上的字符串数组**，
  * 叶子节点不带 `required`；`oneOf` 节点不能与 `properties`/`required`/
  * `additionalProperties` 并列（官方子集校验器的 `ONE_OF_SIBLING_KEYWORDS`）。
- * 形状由部署里 0.2.0-rc.2 的 `defineTool` 编译结果实测得到，并由
+ * 形状由部署里 DSH 0.2.1 的 `defineTool` 编译结果实测得到，并由
  * `assertSupportedJsonSchema` 验证通过。
  *
  * 三个分支：`background`（一开始就声明后台）/ **`promoted`**（前台等超时后转后台，
  * 官方 0.2.x 新增）/ `foreground`（等到了终态，可能带 `stopped`）。
+ *
+ * ⚠️ DSH 0.2.1 起三个分支都**必须**带 `cwd`（官方 `presentationMeta` 把它写进
+ * `tool/result.meta`，终端卡片据此显示实际执行目录；会话 `cd` 之后尤其重要）。
  * @returns `oneOf`（background / promoted / foreground）的 JSON Schema。
  */
 export function bashOutputSchema(): Record<string, unknown> {
@@ -586,8 +616,9 @@ export function bashOutputSchema(): Record<string, unknown> {
         properties: {
           kind: { type: 'string', const: 'background' },
           jobId: { type: 'string' },
+          cwd: { type: 'string' },
         },
-        required: ['kind', 'jobId'],
+        required: ['kind', 'jobId', 'cwd'],
       },
       {
         type: 'object',
@@ -595,16 +626,18 @@ export function bashOutputSchema(): Record<string, unknown> {
         properties: {
           kind: { type: 'string', const: 'promoted' },
           jobId: { type: 'string' },
+          cwd: { type: 'string' },
           timeoutMs: { type: 'number' },
           output: { type: 'string' },
         },
-        required: ['kind', 'jobId', 'timeoutMs', 'output'],
+        required: ['kind', 'jobId', 'cwd', 'timeoutMs', 'output'],
       },
       {
         type: 'object',
         additionalProperties: false,
         properties: {
           kind: { type: 'string', const: 'foreground' },
+          cwd: { type: 'string' },
           exitCode: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
           signal: { oneOf: [{ type: 'string' }, { type: 'null' }] },
           timedOut: { type: 'boolean' },
@@ -625,7 +658,7 @@ export function bashOutputSchema(): Record<string, unknown> {
             required: ['mode', 'denied'],
           },
         },
-        required: ['kind', 'exitCode', 'signal', 'timedOut', 'aborted', 'timeoutMs', 'stdout', 'stderr'],
+        required: ['kind', 'cwd', 'exitCode', 'signal', 'timedOut', 'aborted', 'timeoutMs', 'stdout', 'stderr'],
       },
     ],
   }
@@ -641,20 +674,23 @@ export function canonicalPath(path: string): string {
 }
 
 /**
- * 解析本次命令的工作目录（对齐官方 `resolveWorkdir`）。
+ * 解析本次命令的工作目录（对齐 DSH 0.2.1 官方的 `resolveWorkdir`）。
  *
- * 已解析策略的 `workspaceRoot` 优先，保证 workdir 与 confine 用的是同一个身份。
+ * `sessionCwd` 来自 `ctx.workingDirectory.ensure()`（0.2.1）或旧的
+ * `session.header.cwd`（0.1.7–0.2.0）。`policyWorkspaceRoot` 只在没有会话 cwd 的
+ * 老部署里兜底 —— 0.2.1 的沙箱 workspace root 仍是**原始项目**，不能拿它覆盖
+ * 用户用 `working_directory` 切过去的目录。
  * @param modelWorkdir - 模型给的 `workdir`。
- * @param sessionCwd - 会话头里的 cwd（内部 canonical 化）。
- * @param policyWorkspaceRoot - 已解析策略的 workspace root。
+ * @param sessionCwd - 会话当前工作目录（已由调用方决定是否 canonical 化）。
+ * @param policyWorkspaceRoot - 旧部署的兜底 workspace root（可省略）。
  * @returns 最终 cwd，或 undefined（交给执行器默认 `process.cwd()`）。
  */
 export function resolveWorkdir(
   modelWorkdir: string | undefined,
   sessionCwd: string | undefined,
-  policyWorkspaceRoot: string | undefined,
+  policyWorkspaceRoot?: string | undefined,
 ): string | undefined {
-  const base = policyWorkspaceRoot ?? (sessionCwd === undefined ? undefined : canonicalPath(sessionCwd))
+  const base = sessionCwd ?? policyWorkspaceRoot
   if (modelWorkdir === undefined) return base
   if (base !== undefined && !isAbsolute(modelWorkdir)) return resolve(base, modelWorkdir)
   return modelWorkdir
@@ -837,8 +873,9 @@ export function composeEnv(runtime: BashToolRuntime, exec: ToolRunContextLike): 
     if (process.env[key] === undefined) env[key] = value
   }
   try {
-    const collected =
-      runtime.shellEnv?.collect(exec.agent !== undefined ? { agent: exec.agent as object } : {}) ?? undefined
+    // 官方 0.2.1 的 collect 接收完整 ToolExecution（会读 agent 以及将来的字段）；
+    // 本插件的 exec 投影是它的结构子集，直接透传比只给 { agent } 更稳。
+    const collected = runtime.shellEnv?.collect(exec as object) ?? undefined
     if (collected !== undefined) for (const [key, value] of Object.entries(collected)) env[key] = value
   } catch {
     // shellEnv 失败不影响命令执行。
@@ -945,8 +982,21 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
         : approvedMode === undefined
           ? standing
           : { ...standing, mode: approvedMode }
-    const sessionCwd = exec.agent?.session?.header?.cwd
-    const workdir = resolveWorkdir(args.workdir, sessionCwd, policy?.workspaceRoot) ?? process.cwd()
+    /**
+     * 会话当前目录：DSH 0.2.1 起以 `ctx.workingDirectory` 的 projection 为准
+     * （`session.header.cwd` 只是不可变的原始项目目录，模型 `cd` 后不会变）。
+     * 老版本没有这个服务，退回 header cwd；两者都没有才用策略的 workspace root。
+     */
+    const projectedCwd =
+      runtime.workingDirectory !== undefined && exec.agent !== undefined
+        ? await runtime.workingDirectory.ensure(exec.agent as object, exec.signal)
+        : undefined
+    const headerCwd = exec.agent?.session?.header?.cwd
+    const legacyCwd = projectedCwd === undefined && headerCwd !== undefined ? canonicalPath(headerCwd) : undefined
+    const workdir =
+      projectedCwd !== undefined
+        ? (resolveWorkdir(args.workdir, projectedCwd) ?? process.cwd())
+        : (resolveWorkdir(args.workdir, legacyCwd, policy?.workspaceRoot) ?? process.cwd())
     const timeoutMs = Math.min(args.timeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
     return { args, policy, workdir, timeoutMs, env: composeEnv(runtime, exec) }
   }
@@ -1131,6 +1181,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
         const facts = sandbox()
         return {
           kind: 'foreground',
+          cwd: call.workdir,
           exitCode: proc.exitCode,
           signal: proc.signal,
           timedOut: flags.timedOut,
@@ -1204,6 +1255,9 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
       kind: 'bash',
       label: args.command,
       ...(owner !== undefined ? { owner } : {}),
+      // DSH 0.2.1 把这次工具调用写进 job/registered / job/settled 会话事件；
+      // PTC 子调用的 callId 不是根调用，rootCallId 才让 UI 归位到模型发起的那次调用。
+      toolCall: { callId: exec.callId, rootCallId: exec.rootCallId ?? exec.callId },
       output: [source('stdout'), source('stderr')],
       run: () => {
         const controller = new AbortController()
@@ -1284,6 +1338,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
       await stop('timed out during preparation')
       return {
         kind: 'foreground',
+        cwd: call.workdir,
         exitCode: null,
         signal: null,
         timedOut: true,
@@ -1299,6 +1354,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
       return {
         kind: 'promoted',
         jobId: attached.jobId,
+        cwd: call.workdir,
         timeoutMs,
         output: renderJobRead(
           ringDelta(read.chunks),
@@ -1324,7 +1380,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
     }
     if (exec.signal.aborted) throw abortError()
     const attached = await startJob(call, exec)
-    return { kind: 'background', jobId: attached.jobId }
+    return { kind: 'background', jobId: attached.jobId, cwd: call.workdir }
   }
 
   /**
@@ -1359,7 +1415,7 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
 
   return {
     name: 'bash',
-    description: bashDescription(backgroundEnabled, escalationModes),
+    description: bashDescription(backgroundEnabled, escalationModes, runtime.workingDirectory !== undefined),
     parameters: bashParameters(backgroundEnabled, escalationModes, promote),
     output: {
       schema: bashOutputSchema(),
@@ -1376,6 +1432,15 @@ export function createBashTool(runtime: BashToolRuntime): ToolDefinitionLike {
                   : renderResult(typed, escalationModes),
           },
         ]
+      },
+      /**
+       * DSH 0.2.1 起官方工具把实际执行目录写进 `tool/result.meta`；终端卡片优先读
+       * `meta.cwd`，只有旧结果没有它时才退回会话工作区。会话 `cd` 之后这一项决定卡片
+       * 显示的目录是否真实。
+       */
+      presentationMeta: (_args: unknown, value: unknown): unknown => {
+        const cwd = (value as { cwd?: unknown } | undefined)?.cwd
+        return typeof cwd === 'string' ? { cwd } : undefined
       },
     },
     async execute(rawArgs: unknown, exec: ToolRunContextLike): Promise<BashToolValue> {

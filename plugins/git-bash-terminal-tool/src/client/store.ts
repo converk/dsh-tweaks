@@ -187,7 +187,9 @@ export function createRowController(
     const value = snapshot.value
     if (value !== undefined) settingsReady = true
     store.setState({
-      writable: snapshot.writable && snapshot.mode === 'host' && snapshot.status === 'ready',
+      // 0.2.1 的官方 configForms 快照已删掉 `mode`；缺省视为 host。
+      // 家族兼容层的 webUiSettings 仍会给 `memory`，那才是不可写的页面本地副本。
+      writable: snapshot.writable && snapshot.mode !== 'memory' && snapshot.status === 'ready',
       ...(value !== undefined
         ? { dialect: value.dialect, bashPath: value.bashPath, savedCandidates: value.bashCandidates }
         : {}),
@@ -222,7 +224,11 @@ export function createRowController(
         if (!active) return
         const platform = store.getState().platform
         store.setState({
-          status: platform.length === 0 ? 'loading' : platform === 'win32' ? 'ready' : 'hidden',
+          // 首次 /state 失败时平台未知；若继续停在 loading，设置行会永久消失（只能重挂载）。
+          // 插件 bundle 本身只在 Windows 上进入启动图，所以这里降级为 ready 并显示错误，
+          // 让用户看到「宿主状态读取失败」，而不是一行空白。
+          status: platform === 'win32' || platform.length === 0 ? 'ready' : 'hidden',
+          supported: false,
           error: messageOf(error),
         })
       })

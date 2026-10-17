@@ -2,11 +2,11 @@
  * dsh-tweaks-model-capabilities — 纯逻辑层。
  *
  * 只做两件事，保持最小：
- * 1. **草稿 ↔ 字段**：官方模型行里注入的「思考强度 / 多模态」控件 ↔
- *    `llm-pi-ai` profile 的模型字段（`reasoningEfforts` / `input`）；
+ * 1. **草稿 ↔ 字段**：非 declared pi-ai 路由的思考强度草稿 ↔
+ *    profile 的 `reasoningEfforts`；多模态字段完全交给官方模型行；
  * 2. **path ops 合成**：把待存改动合并成一组 `settings.mutate` 的
  *    `{op:'set'|'unset', path, value}`，并保留插件看不见的字段
- *    （`compat`、`name`、`contextWindow`、`maxTokens`、其它模型条目）。
+ *    （`input`、`compat`、`name`、`contextWindow`、`maxTokens`、其它模型条目）。
  *
  * 交互约定（用户拍板）：
  * - 思考强度按**协议预置**给出词表：`openai` = off/minimal/low/medium/high/xhigh/max，
@@ -15,7 +15,7 @@
  *   勾了档位就写 dict，未勾选的档位不写键，本体把它们钉成「不支持」；
  * - **没有「跟随目录」**：一个档都不勾 = 该模型不支持思考，写 `reasoningEfforts:
  *   false`；勾了档位就写 dict；
- * - 多模态是二选一：`text` / `text + image`，始终写显式值；
+ * - 多模态由官方 `ModelInputTypes` 管理，插件**不读也不写** `input` / `inputModalities`；
  * - 上下文窗口 / 最大输出由官方输入框负责，插件只提供 1M / 128K 快捷填入。
  *
  * 存储形态只有两种，来自官方模型编辑器实际显示的内容：
@@ -41,16 +41,6 @@ export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhig
 /** 一个思考档位的字面量。 */
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number]
 
-/** 本体 `ModelModalityMap` 的词表。 */
-export type Modality = 'text' | 'image'
-
-/**
- * 多模态在模型条目里的字段名：
- * - `llm-pi-ai` 用 `input`；
- * - `llm-deepseek` 用 `inputModalities`。
- */
-export type InputField = 'input' | 'inputModalities'
-
 /** settings.mutate 接受的最小 JSON 值域。 */
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
@@ -62,14 +52,15 @@ export type SettingsPathOp =
   | { op: 'set'; path: string[]; value: JsonValue }
   | { op: 'unset'; path: string[] }
 
-/** 多模态控件的二选一。 */
-export type InputDraft = 'text' | 'text+image'
-
-/** 一个模型的两个能力字段草稿。 */
+/**
+ * 一个模型的思考强度草稿。
+ *
+ * 多模态不在这里：官方模型行自 0.1.7 起就原生提供输入类型控件，插件重复注入会
+ * 和官方草稿打架；本插件只补官方没有的「非 hand-declared pi-ai 路由」思考强度。
+ */
 export interface ModelCapabilityDraft {
   /** 勾选的档位 → 过线拼写；键不存在 = 该档不支持。空对象 = 不支持思考。 */
   reasoning: Partial<Record<ThinkingLevel, string>>
-  input: InputDraft
 }
 
 /** 一条待保存的模型编辑。 */
@@ -111,9 +102,7 @@ export interface SaveInput {
    * `models[]` 时用它完整物化目录；有 `models[]` 时仅作兜底校验。
    */
   visibleModelIds?: readonly string[] | undefined
-  /** 多模态字段名：`llm-pi-ai` = `input`（默认），`llm-deepseek` = `inputModalities`。 */
-  inputField?: InputField | undefined
-  /** 是否管理每模型思考强度（`llm-deepseek` 没有该字段，传 false）。 */
+  /** 是否管理每模型思考强度（`llm-deepseek` / 官方已提供推理控件的声明路由传 false）。 */
   manageReasoning?: boolean | undefined
 }
 
@@ -227,14 +216,14 @@ function readProfile(userSection: unknown, settingsPath: readonly string[]): Jso
   return isJsonObject(profile) ? profile : undefined
 }
 
-/** 空草稿：一个档都不勾（= 不支持思考）+ 仅文本。 */
+/** 空草稿：一个档都不勾（= 不支持思考）。 */
 export function emptyDraft(): ModelCapabilityDraft {
-  return { reasoning: {}, input: 'text' }
+  return { reasoning: {} }
 }
 
 /** 深拷贝草稿。 */
 export function copyDraft(draft: ModelCapabilityDraft): ModelCapabilityDraft {
-  return { reasoning: { ...draft.reasoning }, input: draft.input }
+  return { reasoning: { ...draft.reasoning } }
 }
 
 /**
@@ -245,7 +234,7 @@ export function copyDraft(draft: ModelCapabilityDraft): ModelCapabilityDraft {
  * @param entry - 用户层条目；undefined 表示没有配置。
  * @returns 草稿。
  */
-export function draftFromEntry(entry: unknown, inputField: InputField = 'input'): ModelCapabilityDraft {
+export function draftFromEntry(entry: unknown): ModelCapabilityDraft {
   const draft = emptyDraft()
   if (!isJsonObject(entry)) return draft
   const efforts = entry.reasoningEfforts
@@ -256,14 +245,11 @@ export function draftFromEntry(entry: unknown, inputField: InputField = 'input')
       draft.reasoning[level] = wire === null ? '' : typeof wire === 'string' ? wire : ''
     }
   }
-  const input = entry[inputField]
-  if (isJsonArray(input) && input.includes('image')) draft.input = 'text+image'
   return draft
 }
 
 /** 两个草稿是否相等（用于脏检查）。 */
 export function draftsEqual(left: ModelCapabilityDraft, right: ModelCapabilityDraft): boolean {
-  if (left.input !== right.input) return false
   for (const level of THINKING_LEVELS) {
     if (left.reasoning[level] !== right.reasoning[level]) return false
   }
@@ -302,7 +288,6 @@ export function validateDraft(id: string, draft: ModelCapabilityDraft): SaveIssu
 /** 草稿落成的字段值；`reasoningEfforts` 为 undefined = 该命名空间没有每模型思考字段，不要动它。 */
 export interface DraftValues {
   reasoningEfforts?: false | JsonObject
-  input: Modality[]
 }
 
 /**
@@ -310,9 +295,11 @@ export interface DraftValues {
  *
  * 一个档都不勾 → `reasoningEfforts: false`（不支持思考）；勾了就写 dict，只写
  * 勾选的档位，未勾选的档位不写键（本体钉成不支持）。`off` 勾选且留空写 `null`
- * （支持，但不发参数）。多模态始终写 `['text']` 或 `['text','image']`。
+ * （支持，但不发参数）。
  *
- * `manageReasoning: false`（`llm-deepseek` 没有每模型思考字段）时不产生
+ * **不再写多模态字段**：官方模型行原生管理 `input` / `inputModalities`，插件写它
+ * 会覆盖官方草稿、并丢掉从目录继承的 `image` 能力。`manageReasoning: false`（DeepSeek
+ * 或官方已提供推理控件的声明路由）时不产生
  * `reasoningEfforts`，也不会因为草稿里的档位报错。
  * @param id - 模型 id（用于诊断）。
  * @param draft - 草稿。
@@ -327,8 +314,7 @@ export function fieldValuesFromDraft(
   const manageReasoning = options?.manageReasoning !== false
   const allIssues = validateDraft(id, draft)
   const issues = manageReasoning ? allIssues : allIssues.filter((issue) => issue.code === 'model-id-empty')
-  const input: Modality[] = draft.input === 'text+image' ? ['text', 'image'] : ['text']
-  if (!manageReasoning) return { values: { input }, issues }
+  if (!manageReasoning) return { values: {}, issues }
   const checked = THINKING_LEVELS.filter((level) => draft.reasoning[level] !== undefined)
   let reasoningEfforts: false | JsonObject = false
   if (checked.length > 0) {
@@ -339,12 +325,16 @@ export function fieldValuesFromDraft(
     }
     reasoningEfforts = efforts
   }
-  return { values: { reasoningEfforts, input }, issues }
+  return { values: { reasoningEfforts }, issues }
 }
 
-/** 把字段值应用到一个模型条目（保留插件看不见的键）。 */
-function applyValues(entry: JsonObject, values: DraftValues, inputField: InputField): JsonObject {
-  const next: JsonObject = { ...entry, [inputField]: [...values.input] }
+/**
+ * 把字段值应用到一个模型条目（保留插件看不见的键）。
+ *
+ * 只写 `reasoningEfforts`：多模态字段属于官方控件，插件不碰，避免把继承/官方刚保存的值覆盖掉。
+ */
+function applyValues(entry: JsonObject, values: DraftValues): JsonObject {
+  const next: JsonObject = { ...entry }
   if (values.reasoningEfforts !== undefined) next.reasoningEfforts = values.reasoningEfforts
   return next
 }
@@ -391,6 +381,10 @@ export function buildModelOps(input: SaveInput): SavePlan {
   const overridesRaw = profile?.modelOverrides
   const overrides = isJsonObject(overridesRaw) ? overridesRaw : undefined
   const issues: SaveIssue[] = []
+
+  // DeepSeek / 官方已提供推理控件的声明路由没有插件可写的每模型字段：
+  // 直接返回空计划，绝不为「空改动」物化 models（那会丢掉目录字段）。
+  if (input.manageReasoning === false) return { ops: [], issues, mode: 'none' }
 
   if (isJsonArray(userModels) && overrides !== undefined) {
     issues.push({
@@ -452,7 +446,7 @@ export function buildModelOps(input: SaveInput): SavePlan {
       })
       continue
     }
-    const next = applyValues(entry, values, input.inputField ?? 'input')
+    const next = applyValues(entry, values)
     if (!jsonEqual(next, entry)) {
       base[index] = next
       touched = true

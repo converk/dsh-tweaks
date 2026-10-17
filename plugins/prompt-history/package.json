@@ -1,7 +1,7 @@
 {
   "name": "dsh-tweaks-prompt-history",
   "description": "在会话输入框中用 ↑/↓ 方向键召回本会话已发送的历史提示词",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -27,6 +27,7 @@
   },
   "files": [
     "lib",
+    "src",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -45,7 +46,8 @@
     "build": "node build.mjs",
     "prepack": "npm run build",
     "watch": "node build.mjs --watch",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "selftest": "node scripts/selftest.mjs"
   },
   "devDependencies": {
     "@types/react": "~18.3.1",

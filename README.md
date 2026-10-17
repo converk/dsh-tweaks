@@ -2,14 +2,14 @@
 
 给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
 
-> 适配 DSH **0.2.0**；`git-bash-terminal-tool` 需要 DSH ≥ 0.1.7。
+> 适配 DSH **0.2.1**（`git-bash-terminal-tool` 0.5.0）；`prompt-history` / `model-capabilities` 的支持范围见各自 README。
 
 ---
 
 ## 目录
 
 - [prompt-history —— 输入框里的历史提示词](#prompt-history--输入框里的历史提示词)
-- [model-capabilities —— 给模型行补上「思考强度 / 多模态 / 容量」](#model-capabilities--给模型行补上思考强度--多模态--容量)
+- [model-capabilities —— 给模型行补上「思考强度 / 容量」](#model-capabilities--给模型行补上思考强度--容量)
 - ~~[turn-file-revert —— 本轮改动统计 + 一键撤回](#turn-file-revert--本轮改动统计--一键撤回)~~
   —— **已弃用并停止维护**：功能已由官方提供（DSH 0.2.x 自带的回合改动卡片 + 逐文件 diff 复核），
   最后一个支持版本 **0.2.0**
@@ -39,30 +39,32 @@
 
 ---
 
-## model-capabilities —— 给模型行补上「思考强度 / 多模态 / 容量」
+## model-capabilities —— 给模型行补上「思考强度 / 容量」
 
 **它能做什么**
 
-在 DSH 里编辑模型时，官方界面没有"这个模型支不支持思考""支不支持图片"这类开关。这个插件把这些开关补进模型行，并给容量加两个快捷键：
+DSH 0.2.1 的官方模型行已经原生提供多模态输入类型（0.1.7 起）和 hand-declared pi-ai 路由的推理档位（0.2.1 起）。插件不再重复注入这些控件，只补官方没有的部分：
 
-- **思考强度** —— 先用「协议预置」选协议，它决定可选档位：`OpenAI` = off / minimal / low / medium / high / xhigh / max，`Anthropic` = off / low / medium / high / xhigh / max。两个预置默认都勾 off / low / high / max；一个都不勾 = 这个模型不支持思考。
-- **多模态** —— 选「文本」或「文本+图片」。
-- **容量快捷填入** —— 「上下文窗口 / 最大输出」各有一个 `1M` / `128K` 按钮；新建模型行展开容量时会自动填好 1000000 / 131072。
+- **思考强度** —— 只对**非 hand-declared** 的 `llm-pi-ai` 路由补协议预置：`OpenAI` = off / minimal / low / medium / high / xhigh / max，`Anthropic` = off / low / medium / high / xhigh / max；默认勾 off / low / high / max，一个都不勾 = 不支持思考。
+- **容量快捷填入** —— 官方「上下文窗口 / 最大输出」输入框旁的 `1M / 128K` 按钮；新建模型行展开时自动填 1000000 / 131072。
+- **DeepSeek** —— `llm-deepseek` 补容量快捷 + 摘要 + 提供方级 `thinking` / `reasoningEffort` 面板；`llm-deepseek-account` 在官方 0.2.1 没有模型行，只补提供方级面板。每模型思考/多模态仍由官方控件管理。
 
 **怎么用**
 
-1. 打开 **设置 → 模型**，选一个提供方（比如 `llm-pi-ai`）→ **编辑** → **自定义设置**。
+1. 打开 **设置 → 模型**，选一个提供方（比如 `llm-pi-ai`）→ **编辑**。
 2. 找到要改的模型那一行，点 **「容量」** 展开。
-3. 展开后顶部会显示这个模型当前的配置摘要，下面就是思考强度、多模态和容量按钮。思考强度先用 **「协议预置」** 选 `OpenAI` / `Anthropic`，档位行会换成该协议的枚举（默认勾 off / low / high / max）。
-4. 勾好、选好之后，点官方那个 **「保存」** 就写进去了。
+3. 非 hand-declared 的 `llm-pi-ai` 路由会看到思考强度编辑器；所有支持的路由底部有 `1M / 128K` 按钮。
+4. 改完点官方 **「保存」** 才写入。
 
-**第三方网关（`llm-pi-ai`）** —— 思考强度 + 多模态 + 容量快捷填入：
+> 截图是 0.1.0 旧版，仍包含已删除的重复「多模态」单选框；0.1.1 只保留官方原生多模态控件。
 
-![llm-pi-ai 模型行展开：思考强度选 OpenAI 预置（默认勾 off/low/high/max）+ 多模态 + 1M / 128K](docs/images/model-capabilities-third-party.png)
+**第三方网关（`llm-pi-ai`）** —— 非 declared 路由的思考强度 + 容量快捷：
 
-**官方 DeepSeek（`llm-deepseek`）** —— 只有多模态（DeepSeek 的思考档位是提供方级设置，这里只读显示）：
+![llm-pi-ai 模型行展开：思考强度选 OpenAI 预置（默认勾 off/low/high/max）+ 1M / 128K](docs/images/model-capabilities-third-party.png)
 
-![llm-deepseek 模型行展开：提供方级思考档位提示 + 多模态 + 1M / 128K](docs/images/model-capabilities-official.png)
+**官方 DeepSeek（`llm-deepseek`）** —— 容量快捷 + 摘要 + 提供方级思考面板：
+
+![llm-deepseek 模型行展开：提供方级思考档位提示 + 1M / 128K](docs/images/model-capabilities-official.png)
 
 ---
 
@@ -108,7 +110,7 @@
 
 ## git-bash-terminal-tool —— 可将 Windows 环境下的终端工具替换为 Git Bash
 
-> ⚠️ **请用 0.4.0 或更高**（最低支持 DSH **0.1.7**）。
+> ⚠️ **请用 0.5.0 或更高**（最低支持 DSH **0.1.7**；0.5.0 对齐 DSH 0.2.1 的会话当前目录）。
 
 **它能做什么**
 
