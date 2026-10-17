@@ -11,7 +11,7 @@
 #
 # 触发方式：
 #   1) 推一个 <插件目录名>/v<版本> 的 tag（版本必须与 package.json 一致）：
-#        git tag git-bash-terminal-tool/v0.2.0 && git push origin git-bash-terminal-tool/v0.2.0
+#        git tag <插件目录名>/v<版本> && git push origin <插件目录名>/v<版本>
 #   2) 或在 Actions 页面手动 workflow_dispatch（可选 dry_run，只打包不发布）。
 #
 # 前提：npm CLI >= 11.5.1、Node >= 22.14.0（下面都装了），且仓库是 public（provenance 需要）。
@@ -28,8 +28,6 @@ on:
           - git-bash-terminal-tool
           - prompt-history
           - smart-list
-          # turn-file-revert（2026-09 停维护）与 model-capabilities（2026-10 停维护，见 AGENTS.md §2）
-          # 都已不再发布，故不列出（要补发需先重新加回这里与下面的 case 白名单）。
       dry_run:
         description: 只跑 npm publish --dry-run（不真正发布）
         required: false
