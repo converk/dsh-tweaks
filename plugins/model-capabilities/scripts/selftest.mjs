@@ -10,8 +10,9 @@
  * modelOverrides；未保存模型被拒；协议预置只填档位表、绝不写 compat。
  */
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const modulePath = new URL('../lib/capability.js', import.meta.url)
@@ -503,6 +504,87 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
   assert.ok(augment.includes('input[type="text"], input:not([type])'), '模型 ID 输入框判据')
 })
 
+// ---------------------------------------------------------------------------
+// 兼容闸门自身的回归：官方产物路径解析
+//
+// 0.2.1 起 dsh-api-gateway 的 client 产物被拆成 client.browser.js /
+// client.node.js（exports["./client"] 按条件映射），固定文件路径断言会误报。
+// 这里用临时目录模拟各版本布局，确保解析器在没有 DSH 部署的 CI 上也跑得起来。
+// ---------------------------------------------------------------------------
+
+test('官方产物解析：0.2.0 旧布局 / 0.2.1 exports 条件 / 缺失返回 undefined', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-contract-'))
+  try {
+    const write = (packageName, files) => {
+      for (const [relative, content] of Object.entries(files)) {
+        const file = join(root, packageName, ...relative.split('/'))
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, content)
+      }
+    }
+    const manifest = (exportsValue) => JSON.stringify({ exports: exportsValue })
+
+    // 0.2.0：exports["./client"] 直接 default 到固定的 lib/client.js。
+    write('legacy-layout', {
+      'package.json': manifest({ './client': { types: './lib/types/client/index.d.ts', default: './lib/client.js' } }),
+      'lib/client.js': 'LEGACY',
+    })
+    // 0.2.1：exports["./client"] 按 node / browser / default 条件拆成两份产物。
+    write('split-layout', {
+      'package.json': manifest({
+        './client': {
+          types: './lib/types/client/index.d.ts',
+          node: './lib/client.node.js',
+          browser: './lib/client.browser.js',
+          default: './lib/client.browser.js',
+        },
+      }),
+      'lib/client.browser.js': 'BROWSER',
+      'lib/client.node.js': 'NODE',
+      'lib/client.js': 'STALE',
+    })
+    // 没有 package.json：回退固定文件名；再退到 lib/client*.js（browser 优先、node 垫底）。
+    write('no-manifest', { 'lib/client.browser.js': 'BROWSER' })
+    write('glob-only', { 'lib/client.node.js': 'NODE' })
+    // exports 指向的文件不存在：回退仍然成立。
+    write('broken-exports', {
+      'package.json': manifest({ './client': { browser: './lib/missing.js', default: './lib/missing.js' } }),
+      'lib/client.js': 'LEGACY',
+    })
+    // 0.2.1 的 SlotCore 内联在 web 前端 dist 产物里（包本身不在 npm 完整安装中）。
+    write('web-frontend', { 'dist/assets/index-abc123.js': 'SEEDED' })
+
+    const legacy = resolveOfficialArtifact(root, { package: 'legacy-layout' })
+    assert.equal(legacy, join(root, 'legacy-layout', 'lib', 'client.js'))
+
+    const split = resolveOfficialArtifact(root, { package: 'split-layout' })
+    assert.equal(
+      split,
+      join(root, 'split-layout', 'lib', 'client.browser.js'),
+      'browser 条件必须优先于 node 条件与同样存在的 client.js',
+    )
+
+    assert.equal(
+      resolveOfficialArtifact(root, { package: 'no-manifest' }),
+      join(root, 'no-manifest', 'lib', 'client.browser.js'),
+    )
+    assert.equal(resolveOfficialArtifact(root, { package: 'glob-only' }), join(root, 'glob-only', 'lib', 'client.node.js'))
+    assert.equal(
+      resolveOfficialArtifact(root, { package: 'broken-exports' }),
+      join(root, 'broken-exports', 'lib', 'client.js'),
+    )
+    assert.equal(resolveOfficialArtifact(root, { package: 'does-not-exist' }), undefined)
+
+    const fallbackFact = {
+      artifact: { package: 'not-installed', entry: './client', fallbacks: ['web-frontend/dist/assets/index-*.js'] },
+    }
+    assert.equal(resolveFactFile(root, fallbackFact), join(root, 'web-frontend', 'dist', 'assets', 'index-abc123.js'))
+    assert.equal(resolveFactFile(root, { path: 'nope.js' }), undefined)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 /**
  * 官方产物里必须逐字出现的契约原文（任一片段消失 = 契约漂移）。
  * `path` 相对 `<部署>/node_modules/@deepseek-ai`。
@@ -510,7 +592,7 @@ test('契约面：插件源码里的服务名 / slot 键 / 事件名 / DOM 判�
 const OFFICIAL_CONTRACT_FACTS = [
   {
     name: 'remote / remote.settings 是 traced 客户端服务（服务键 remote.<namespace>）',
-    path: 'dsh-api-gateway/lib/client.js',
+    artifact: { package: 'dsh-api-gateway', entry: './client' },
     includes: [
       'function remoteServiceKey(namespace)',
       'return `remote.${namespace}`;',
@@ -544,7 +626,7 @@ const OFFICIAL_CONTRACT_FACTS = [
   },
   {
     name: '事件转发保留原始实参顺序（...frame.args）',
-    path: 'dsh-api-gateway/lib/client.js',
+    artifact: { package: 'dsh-api-gateway', entry: './client' },
     includes: ['privateEvents(this.ownerCtx).parallel(this.eventKey(frame.event), ...frame.args)'],
   },
   {
@@ -575,22 +657,21 @@ const OFFICIAL_CONTRACT_FACTS = [
     includes: ['_rowCard', '_setupCard', '_modelEntry', '_modelList', '_modelAdvanced', '_modelRow', '_editorActions'],
   },
   {
-    name: 'DOM 判据：展开区仍是 contextWindow / maxTokens 两个 input 在前',
-    path: 'dsh-client-ui-settings-models/lib/client.js',
-    includes: [
-      'className: ModelsSection_module_css_default["modelAdvanced"]',
-      'children: [["contextWindow", "maxTokens"].map((field) =>',
-    ],
-  },
-  {
     name: 'slots 服务名与 slots.inject(key, callback) / keyed 必填 key',
     path: 'dsh-client-ui-renderer/lib/client.js',
     includes: ['super(ctx, "slots");', 'inject(key, callback) {'],
   },
   {
     name: 'keyed slot 注册必须带 key（插件正是按 key 挂两个提供方）',
-    path: 'dsh-client-ui-slots/lib/index.js',
-    includes: ['if (options.key === void 0) throw new Error(`keyed slot "${options.name}" requires options.key`);'],
+    // 0.2.0 的 SlotCore 在独立包 dsh-client-ui-slots；0.2.1 起该包只是渲染层的
+    // devDependency（npm 完整安装里没有），SlotCore 被内联进 web 前端种子模块产物，
+    // 所以先按包解析，缺失时回退到前端 dist 里找同一段 keyed 校验。
+    artifact: {
+      package: 'dsh-client-ui-slots',
+      entry: '.',
+      fallbacks: ['dsh-web-frontend/dist/assets/index-*.js'],
+    },
+    includes: ['keyed slot', 'requires options.key'],
   },
   {
     name: 'locale 服务是 ctx.provide 的，且三参 register / bind 都在',
@@ -637,6 +718,25 @@ const OFFICIAL_STRUCTURE_CHECKS = [
       return cancel < submit ? undefined : 'primaryButton precedes secondaryButton'
     },
   },
+  {
+    name: '展开区仍是 contextWindow / maxTokens 两个容量 input 在前（插件取 advanced 里前两个 input）',
+    path: 'dsh-client-ui-settings-models/lib/client.js',
+    check(source) {
+      const start = source.indexOf('function ModelRow(props)')
+      if (start < 0) return 'missing function ModelRow(props)'
+      const region = source.indexOf('//#region', start + 1)
+      const body = source.slice(start, region < 0 ? start + 8000 : region)
+      const advanced = body.indexOf('["modelAdvanced"]')
+      const capacity = body.indexOf('["contextWindow", "maxTokens"].map')
+      const inputTypes = body.indexOf('(ModelInputTypes,')
+      if (advanced < 0) return 'missing modelAdvanced expanded region'
+      if (capacity < 0) return 'missing contextWindow / maxTokens capacity inputs'
+      if (inputTypes < 0) return 'missing ModelInputTypes control'
+      if (capacity < advanced) return 'capacity inputs are no longer inside modelAdvanced'
+      if (inputTypes < capacity) return 'input-type control no longer follows the capacity inputs'
+      return undefined
+    },
+  },
 ]
 
 /** 把环境变量给的一项收成「直接含 @deepseek-ai 的那层目录」。 */
@@ -645,6 +745,140 @@ function officialRootOf(entry) {
   if (existsSync(direct)) return direct
   if (existsSync(entry) && entry.replace(/[\\/]+$/, '').endsWith('@deepseek-ai')) return entry
   return undefined
+}
+
+/**
+ * 读官方包的 package.json（只当 JSON 读，不 import 官方包本身）。
+ * @returns 解析结果；包目录或 package.json 不存在 / 不是合法 JSON 时 undefined。
+ */
+function readOfficialPackageJson(root, packageName) {
+  const file = join(root, packageName, 'package.json')
+  if (!existsSync(file)) return undefined
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 从 exports 的目标值里按条件优先级取第一个字符串目标（支持条件对象 / 数组嵌套）。
+ * @param target - exports 目标（字符串 / 条件对象 / 数组）。
+ * @param conditions - 条件名，按优先级排列。
+ * @returns 相对包目录的目标路径；解析不到时 undefined。
+ */
+function pickExportTarget(target, conditions) {
+  if (typeof target === 'string') return target
+  if (Array.isArray(target)) {
+    for (const item of target) {
+      const picked = pickExportTarget(item, conditions)
+      if (picked !== undefined) return picked
+    }
+    return undefined
+  }
+  if (target === null || typeof target !== 'object') return undefined
+  for (const condition of conditions) {
+    if (!Object.hasOwn(target, condition)) continue
+    const picked = pickExportTarget(target[condition], conditions)
+    if (picked !== undefined) return picked
+  }
+  return undefined
+}
+
+/**
+ * 解析官方包浏览器半区产物的真实文件。
+ *
+ * 0.2.1 起 exports["./client"] 按条件把浏览器 / Node 两份产物拆开
+ * （dsh-api-gateway 变成 lib/client.browser.js + lib/client.node.js，
+ * 文件名不再固定为 lib/client.js）；这里按 exports 条件的
+ * browser → default → node 顺序解析真实文件，再回退 0.2.0 的固定布局
+ * （lib/client.browser.js / lib/client.js）与 lib/client*.js。
+ * 只把 package.json 当 JSON 读，不 import 官方包，0.2.0 旧部署同样可用。
+ * @returns 绝对路径；包缺失或解析不到时 undefined。
+ */
+function resolveOfficialArtifact(root, artifact) {
+  const packageDir = join(root, artifact.package)
+  const packageJson = readOfficialPackageJson(root, artifact.package)
+  const entry = artifact.entry ?? './client'
+  const target =
+    packageJson !== undefined && packageJson.exports !== null && typeof packageJson.exports === 'object'
+      ? pickExportTarget(packageJson.exports[entry], ['browser', 'default', 'node'])
+      : undefined
+  if (target !== undefined) {
+    const file = join(packageDir, target)
+    if (existsSync(file)) return file
+  }
+  for (const name of ['lib/client.browser.js', 'lib/client.js']) {
+    const file = join(packageDir, name)
+    if (existsSync(file)) return file
+  }
+  const libDir = join(packageDir, 'lib')
+  let names
+  try {
+    names = readdirSync(libDir)
+  } catch {
+    return undefined
+  }
+  const rank = (name) => (name.includes('browser') ? 0 : name === 'client.js' ? 1 : name.includes('node') ? 3 : 2)
+  const candidates = names
+    .filter((name) => name.startsWith('client') && name.endsWith('.js'))
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+  return candidates.length === 0 ? undefined : join(libDir, candidates[0])
+}
+
+/**
+ * 展开相对部署根的单层通配路径（只支持最后一段含一个 *，够覆盖前端 dist 产物）。
+ * @returns 匹配到的绝对路径（按名称排序，保证确定性）。
+ */
+function expandOfficialGlob(root, pattern) {
+  const segments = pattern.split('/')
+  const last = segments.pop()
+  if (last === undefined) return []
+  const star = last.indexOf('*')
+  if (star < 0) {
+    const file = join(root, ...segments, last)
+    return existsSync(file) ? [file] : []
+  }
+  if (last.indexOf('*', star + 1) !== -1) throw new Error(`不支持多段通配：${pattern}`)
+  const prefix = last.slice(0, star)
+  const suffix = last.slice(star + 1)
+  const dir = join(root, ...segments)
+  let names
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return []
+  }
+  return names
+    .filter((name) => name.length >= prefix.length + suffix.length && name.startsWith(prefix) && name.endsWith(suffix))
+    .sort()
+    .map((name) => join(dir, name))
+}
+
+/**
+ * 把一条官方契约事实解析成实际要读的文件：artifact 走 exports / 固定布局 / glob 回退。
+ * @returns 绝对路径；解析不到时 undefined。
+ */
+function resolveFactFile(root, fact) {
+  if (fact.artifact === undefined) {
+    const file = join(root, fact.path)
+    return existsSync(file) ? file : undefined
+  }
+  const resolved = resolveOfficialArtifact(root, fact.artifact)
+  if (resolved !== undefined) return resolved
+  for (const pattern of fact.artifact.fallbacks ?? []) {
+    const matched = expandOfficialGlob(root, pattern)
+    if (matched.length > 0) return matched[0]
+  }
+  return undefined
+}
+
+/** 把一条事实的来源描述成便于排查的文案。 */
+function describeFactSource(fact) {
+  if (fact.artifact === undefined) return fact.path
+  const entry = fact.artifact.entry ?? './client'
+  const fallbacks = (fact.artifact.fallbacks ?? []).map((pattern) => `；回退 ${pattern}`).join('')
+  return `${fact.artifact.package} 的 ${entry} 导出（按 browser/default/node 解析）${fallbacks}`
 }
 
 /** 从环境变量解析要核对的 DSH 部署（可多份，用路径分隔符列表给 DSH_CONTRACT_HOMES）。 */
@@ -673,8 +907,11 @@ if (officialRoots.length === 0) {
   for (const root of officialRoots) {
     test(`官方契约原文 @ ${root}`, () => {
       for (const fact of OFFICIAL_CONTRACT_FACTS) {
-        const file = join(root, fact.path)
-        assert.ok(existsSync(file), `缺少官方产物 ${fact.path}`)
+        const file = resolveFactFile(root, fact)
+        assert.ok(
+          file !== undefined,
+          `缺少官方产物 ${describeFactSource(fact)}（exports 条件解析与旧布局回退都没命中）`,
+        )
         const source = readFileSync(file, 'utf8')
         for (const fragment of fact.includes) {
           assert.ok(
@@ -684,7 +921,9 @@ if (officialRoots.length === 0) {
         }
       }
       for (const structure of OFFICIAL_STRUCTURE_CHECKS) {
-        const source = readFileSync(join(root, structure.path), 'utf8')
+        const file = join(root, structure.path)
+        assert.ok(existsSync(file), `缺少官方产物 ${structure.path}`)
+        const source = readFileSync(file, 'utf8')
         const failure = structure.check(source)
         assert.equal(failure, undefined, `${structure.name}：${failure ?? ''}`)
       }

@@ -2,7 +2,7 @@
 
 给 **DSH（DeepSeek Harness）** 装的一套小插件：装上就直接用，不用改 DSH 本身。
 
-> 适配 DSH **0.2.0**；`git-bash-terminal-tool` 需要 DSH ≥ 0.1.7。
+> 适配 DSH **0.2.1**（最低 0.2.0）；`git-bash-terminal-tool` 0.4.1 起最低支持 DSH 0.2.0。
 
 ---
 
@@ -108,7 +108,7 @@
 
 ## git-bash-terminal-tool —— 可将 Windows 环境下的终端工具替换为 Git Bash
 
-> ⚠️ **请用 0.4.0 或更高**（最低支持 DSH **0.1.7**）。
+> ⚠️ **请用 0.4.1 或更高**（最低支持 DSH **0.2.0**；0.4.0 在 DSH 0.2.1 上设置面板会整行只读，0.4.1 修复）。
 
 **它能做什么**
 
